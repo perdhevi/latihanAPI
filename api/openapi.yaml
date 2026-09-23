@@ -1,0 +1,1810 @@
+openapi: "3.0.3"
+info:
+  title: "latihanApi"
+  version: "0.2.0"
+  description: "Personal sessions, plans, profiles and measurement history. /exercises has been removed. User IDs identify ownership but do not authenticate callers; restrict network access until authentication is added. All responses include X-Request-ID. Input bodies are limited to 1 MiB; unknown JSON fields, unknown/repeated query parameters and multiple JSON values are rejected. Strings are trimmed. PUT fully replaces editable fields; no upserts. UUIDs and creation timestamps are server-managed. HTTP method errors use the same Error schema."
+servers:
+  -
+    url: "http://localhost:8080"
+tags:
+  -
+    name: "Health"
+  -
+    name: "Sessions"
+  -
+    name: "Plans"
+  -
+    name: "Users"
+  -
+    name: "Measurements"
+paths:
+  "/health":
+    get:
+      operationId: "health"
+      tags:
+        - "Health"
+      summary: "Liveness independent of database availability"
+      responses:
+        "200":
+          description: "Healthy"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Health"
+  "/ready":
+    get:
+      operationId: "ready"
+      tags:
+        - "Health"
+      summary: "PostgreSQL connectivity with a two-second deadline"
+      responses:
+        "200":
+          description: "Ready"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Health"
+        "503":
+          description: "Database unavailable"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/sessions":
+    post:
+      operationId: "createSession"
+      tags:
+        - "Sessions"
+      summary: "Create session"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/SessionInput"
+      responses:
+        "201":
+          description: "Created"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Session"
+          headers:
+            Location:
+              schema:
+                type: "string"
+              description: "Relative URL of the created resource"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "413":
+          description: "Body exceeds 1 MiB."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "415":
+          description: "Content-Type must be application/json."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+    get:
+      operationId: "listSessions"
+      tags:
+        - "Sessions"
+      summary: "List sessions"
+      description: "Required user_id filter. Newest performed_at first, then id DESC. No matches returns an empty items array."
+      parameters:
+        -
+          name: "user_id"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+            description: "Nonzero UUID"
+        -
+          name: "limit"
+          in: "query"
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+            default: 20
+        -
+          name: "offset"
+          in: "query"
+          schema:
+            type: "integer"
+            minimum: 0
+            maximum: 2147483647
+            default: 0
+      responses:
+        "200":
+          description: "Page"
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                additionalProperties: false
+                required:
+                  - "items"
+                  - "limit"
+                  - "offset"
+                properties:
+                  items:
+                    type: "array"
+                    items:
+                      "$ref": "#/components/schemas/Session"
+                  limit:
+                    type: "integer"
+                  offset:
+                    type: "integer"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/sessions/{id}":
+    parameters:
+      -
+        name: "id"
+        in: "path"
+        required: true
+        schema:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+    get:
+      operationId: "getSession"
+      tags:
+        - "Sessions"
+      summary: "Get session"
+      responses:
+        "200":
+          description: "Found"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Session"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: "Resource missing, belongs to another user, or session not attached to the requested plan."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+    put:
+      operationId: "updateSession"
+      tags:
+        - "Sessions"
+      summary: "Replace session"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/SessionInput"
+      responses:
+        "200":
+          description: "Updated"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Session"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: "Resource missing, belongs to another user, or session not attached to the requested plan."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "413":
+          description: "Body exceeds 1 MiB."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "415":
+          description: "Content-Type must be application/json."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+    delete:
+      operationId: "deleteSession"
+      tags:
+        - "Sessions"
+      summary: "Delete session"
+      responses:
+        "204":
+          description: "Deleted, no body"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: "Resource missing, belongs to another user, or session not attached to the requested plan."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/plans":
+    post:
+      operationId: "createPlan"
+      tags:
+        - "Plans"
+      summary: "Create plan"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/PlanInput"
+      responses:
+        "201":
+          description: "Created"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Plan"
+          headers:
+            Location:
+              schema:
+                type: "string"
+              description: "Relative URL of the created resource"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "413":
+          description: "Body exceeds 1 MiB."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "415":
+          description: "Content-Type must be application/json."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+    get:
+      operationId: "listPlans"
+      tags:
+        - "Plans"
+      summary: "List plans"
+      description: "Required user_id filter. Newest created_at first, then id DESC. No matches returns an empty items array."
+      parameters:
+        -
+          name: "user_id"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+            description: "Nonzero UUID"
+        -
+          name: "limit"
+          in: "query"
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+            default: 20
+        -
+          name: "offset"
+          in: "query"
+          schema:
+            type: "integer"
+            minimum: 0
+            maximum: 2147483647
+            default: 0
+      responses:
+        "200":
+          description: "Page"
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                additionalProperties: false
+                required:
+                  - "items"
+                  - "limit"
+                  - "offset"
+                properties:
+                  items:
+                    type: "array"
+                    items:
+                      "$ref": "#/components/schemas/Plan"
+                  limit:
+                    type: "integer"
+                  offset:
+                    type: "integer"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/plans/{id}":
+    parameters:
+      -
+        name: "id"
+        in: "path"
+        required: true
+        schema:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+    get:
+      operationId: "getPlan"
+      tags:
+        - "Plans"
+      summary: "Get plan"
+      responses:
+        "200":
+          description: "Found"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Plan"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: "Resource missing, belongs to another user, or session not attached to the requested plan."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+    put:
+      operationId: "updatePlan"
+      tags:
+        - "Plans"
+      summary: "Replace plan"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/PlanInput"
+      responses:
+        "200":
+          description: "Updated"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Plan"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: "Resource missing, belongs to another user, or session not attached to the requested plan."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "413":
+          description: "Body exceeds 1 MiB."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "415":
+          description: "Content-Type must be application/json."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+    delete:
+      operationId: "deletePlan"
+      tags:
+        - "Plans"
+      summary: "Delete plan"
+      responses:
+        "204":
+          description: "Deleted, no body"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: "Resource missing, belongs to another user, or session not attached to the requested plan."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "409":
+          description: "Dependent records prevent deletion."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/users":
+    post:
+      operationId: "createUser"
+      tags:
+        - "Users"
+      summary: "Create user"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/UserInput"
+      responses:
+        "201":
+          description: "Created"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/User"
+          headers:
+            Location:
+              schema:
+                type: "string"
+              description: "Relative URL of the created resource"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "413":
+          description: "Body exceeds 1 MiB."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "415":
+          description: "Content-Type must be application/json."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/users/{userID}":
+    parameters:
+      -
+        name: "userID"
+        in: "path"
+        required: true
+        schema:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+    get:
+      operationId: "getUser"
+      tags:
+        - "Users"
+      summary: "Get user"
+      responses:
+        "200":
+          description: "Found"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/User"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: "Resource missing, belongs to another user, or session not attached to the requested plan."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+    put:
+      operationId: "updateUser"
+      tags:
+        - "Users"
+      summary: "Replace user"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/UserInput"
+      responses:
+        "200":
+          description: "Updated"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/User"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: "Resource missing, belongs to another user, or session not attached to the requested plan."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "413":
+          description: "Body exceeds 1 MiB."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "415":
+          description: "Content-Type must be application/json."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+    delete:
+      operationId: "deleteUser"
+      tags:
+        - "Users"
+      summary: "Delete user"
+      responses:
+        "204":
+          description: "Deleted, no body"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: "Resource missing, belongs to another user, or session not attached to the requested plan."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "409":
+          description: "Dependent records prevent deletion."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/users/{userID}/measurements":
+    parameters:
+      -
+        name: "userID"
+        in: "path"
+        required: true
+        schema:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+    post:
+      operationId: "createMeasurement"
+      tags:
+        - "Measurements"
+      summary: "Create measurement"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/MeasurementInput"
+      responses:
+        "201":
+          description: "Created"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Measurement"
+          headers:
+            Location:
+              schema:
+                type: "string"
+              description: "Relative URL of the created resource"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "413":
+          description: "Body exceeds 1 MiB."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "415":
+          description: "Content-Type must be application/json."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+    get:
+      operationId: "listMeasurements"
+      tags:
+        - "Measurements"
+      summary: "List measurements"
+      description: "Newest measured_at first, then id DESC. A missing user returns 404."
+      parameters:
+        -
+          name: "limit"
+          in: "query"
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+            default: 20
+        -
+          name: "offset"
+          in: "query"
+          schema:
+            type: "integer"
+            minimum: 0
+            maximum: 2147483647
+            default: 0
+      responses:
+        "200":
+          description: "Page"
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                additionalProperties: false
+                required:
+                  - "items"
+                  - "limit"
+                  - "offset"
+                properties:
+                  items:
+                    type: "array"
+                    items:
+                      "$ref": "#/components/schemas/Measurement"
+                  limit:
+                    type: "integer"
+                  offset:
+                    type: "integer"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: "Resource missing, belongs to another user, or session not attached to the requested plan."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/users/{userID}/measurements/{id}":
+    parameters:
+      -
+        name: "userID"
+        in: "path"
+        required: true
+        schema:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+      -
+        name: "id"
+        in: "path"
+        required: true
+        schema:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+    get:
+      operationId: "getMeasurement"
+      tags:
+        - "Measurements"
+      summary: "Get measurement"
+      responses:
+        "200":
+          description: "Found"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Measurement"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: "Resource missing, belongs to another user, or session not attached to the requested plan."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+    put:
+      operationId: "updateMeasurement"
+      tags:
+        - "Measurements"
+      summary: "Replace measurement"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/MeasurementInput"
+      responses:
+        "200":
+          description: "Updated"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Measurement"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: "Resource missing, belongs to another user, or session not attached to the requested plan."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "413":
+          description: "Body exceeds 1 MiB."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "415":
+          description: "Content-Type must be application/json."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+    delete:
+      operationId: "deleteMeasurement"
+      tags:
+        - "Measurements"
+      summary: "Delete measurement"
+      responses:
+        "204":
+          description: "Deleted, no body"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: "Resource missing, belongs to another user, or session not attached to the requested plan."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/plans/{id}/comparison":
+    parameters:
+      -
+        name: "id"
+        in: "path"
+        required: true
+        schema:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+    get:
+      operationId: "comparePlanWithSession"
+      tags:
+        - "Plans"
+      summary: "Compare the attached plan snapshot with actual session results"
+      parameters:
+        -
+          name: "session_id"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+            description: "Nonzero UUID"
+      responses:
+        "200":
+          description: "Planned versus actual"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Comparison"
+        "400":
+          description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: "Resource missing, belongs to another user, or session not attached to the requested plan."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+components:
+  schemas:
+    Set:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "repetitions"
+        - "weight_kg"
+      properties:
+        repetitions:
+          type: "integer"
+          minimum: 1
+          maximum: 1000
+        weight_kg:
+          type: "number"
+          minimum: 0
+          maximum: 2000
+    ExerciseInput:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "name"
+        - "kind"
+      properties:
+        name:
+          type: "string"
+          maxLength: 200
+          minLength: 1
+        kind:
+          type: "string"
+          enum:
+            - "strength"
+            - "cardio"
+        sets:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/Set"
+          maxItems: 100
+          nullable: true
+        minutes:
+          type: "number"
+          exclusiveMinimum: true
+          minimum: 0
+          maximum: 1440
+          nullable: true
+        avg_bpm:
+          type: "integer"
+          minimum: 1
+          maximum: 300
+          nullable: true
+      description: "Names are trimmed, kind is lowercased. Strength requires 1..100 sets with explicit weight_kg (0 for bodyweight), and no non-null cardio metrics. Cardio requires minutes and no sets; avg_bpm is optional. Exercise order and set order are preserved."
+      oneOf:
+        -
+          properties:
+            kind:
+              enum:
+                - "strength"
+            sets:
+              type: "array"
+              minItems: 1
+              maxItems: 100
+              items:
+                "$ref": "#/components/schemas/Set"
+            minutes:
+              nullable: true
+              enum:
+                - null
+            avg_bpm:
+              nullable: true
+              enum:
+                - null
+          required:
+            - "sets"
+        -
+          properties:
+            kind:
+              enum:
+                - "cardio"
+            sets:
+              type: "array"
+              nullable: true
+              maxItems: 0
+            minutes:
+              type: "number"
+              minimum: 0
+              exclusiveMinimum: true
+              maximum: 1440
+          required:
+            - "minutes"
+    PlanExercise:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "name"
+        - "kind"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+        name:
+          type: "string"
+          maxLength: 200
+          minLength: 1
+        kind:
+          type: "string"
+          enum:
+            - "strength"
+            - "cardio"
+        sets:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/Set"
+          maxItems: 100
+          nullable: true
+        minutes:
+          type: "number"
+          exclusiveMinimum: true
+          minimum: 0
+          maximum: 1440
+          nullable: true
+        avg_bpm:
+          type: "integer"
+          minimum: 1
+          maximum: 300
+          nullable: true
+      description: "Names are trimmed, kind is lowercased. Strength requires 1..100 sets with explicit weight_kg (0 for bodyweight), and no non-null cardio metrics. Cardio requires minutes and no sets; avg_bpm is optional. Exercise order and set order are preserved."
+      oneOf:
+        -
+          properties:
+            kind:
+              enum:
+                - "strength"
+            sets:
+              type: "array"
+              minItems: 1
+              maxItems: 100
+              items:
+                "$ref": "#/components/schemas/Set"
+            minutes:
+              nullable: true
+              enum:
+                - null
+            avg_bpm:
+              nullable: true
+              enum:
+                - null
+          required:
+            - "sets"
+        -
+          properties:
+            kind:
+              enum:
+                - "cardio"
+            sets:
+              type: "array"
+              nullable: true
+              maxItems: 0
+            minutes:
+              type: "number"
+              minimum: 0
+              exclusiveMinimum: true
+              maximum: 1440
+          required:
+            - "minutes"
+    SessionExercise:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "name"
+        - "kind"
+      properties:
+        plan_exercise_id:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+          nullable: true
+        name:
+          type: "string"
+          maxLength: 200
+          minLength: 1
+        kind:
+          type: "string"
+          enum:
+            - "strength"
+            - "cardio"
+        sets:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/Set"
+          maxItems: 100
+          nullable: true
+        minutes:
+          type: "number"
+          exclusiveMinimum: true
+          minimum: 0
+          maximum: 1440
+          nullable: true
+        avg_bpm:
+          type: "integer"
+          minimum: 1
+          maximum: 300
+          nullable: true
+      description: "Names are trimmed, kind is lowercased. Strength requires 1..100 sets with explicit weight_kg (0 for bodyweight), and no non-null cardio metrics. Cardio requires minutes and no sets; avg_bpm is optional. Exercise order and set order are preserved."
+      oneOf:
+        -
+          properties:
+            kind:
+              enum:
+                - "strength"
+            sets:
+              type: "array"
+              minItems: 1
+              maxItems: 100
+              items:
+                "$ref": "#/components/schemas/Set"
+            minutes:
+              nullable: true
+              enum:
+                - null
+            avg_bpm:
+              nullable: true
+              enum:
+                - null
+          required:
+            - "sets"
+        -
+          properties:
+            kind:
+              enum:
+                - "cardio"
+            sets:
+              type: "array"
+              nullable: true
+              maxItems: 0
+            minutes:
+              type: "number"
+              minimum: 0
+              exclusiveMinimum: true
+              maximum: 1440
+          required:
+            - "minutes"
+    UserInput:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "display_name"
+      properties:
+        display_name:
+          type: "string"
+          maxLength: 200
+          minLength: 1
+    User:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "display_name"
+        - "created_at"
+        - "updated_at"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+        display_name:
+          type: "string"
+          maxLength: 200
+          minLength: 1
+        created_at:
+          type: "string"
+          format: "date-time"
+        updated_at:
+          type: "string"
+          format: "date-time"
+    MeasurementInput:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "measured_at"
+      properties:
+        measured_at:
+          type: "string"
+          format: "date-time"
+        weight_kg:
+          type: "number"
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 1000
+          nullable: true
+        height_cm:
+          type: "number"
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 300
+          nullable: true
+        body_fat_percent:
+          type: "number"
+          minimum: 0
+          maximum: 100
+          nullable: true
+        waist_cm:
+          type: "number"
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 500
+          nullable: true
+        chest_cm:
+          type: "number"
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 500
+          nullable: true
+        hip_cm:
+          type: "number"
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 500
+          nullable: true
+      description: "At least one non-null measurement is required. Null or omitted metrics mean unrecorded. PUT replaces the full record, clearing omitted metrics. Times use RFC3339, must be nonzero, and are returned in UTC."
+    Measurement:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "user_id"
+        - "measured_at"
+        - "weight_kg"
+        - "height_cm"
+        - "body_fat_percent"
+        - "waist_cm"
+        - "chest_cm"
+        - "hip_cm"
+        - "created_at"
+        - "updated_at"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+        user_id:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+        measured_at:
+          type: "string"
+          format: "date-time"
+        weight_kg:
+          type: "number"
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 1000
+          nullable: true
+        height_cm:
+          type: "number"
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 300
+          nullable: true
+        body_fat_percent:
+          type: "number"
+          minimum: 0
+          maximum: 100
+          nullable: true
+        waist_cm:
+          type: "number"
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 500
+          nullable: true
+        chest_cm:
+          type: "number"
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 500
+          nullable: true
+        hip_cm:
+          type: "number"
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 500
+          nullable: true
+        created_at:
+          type: "string"
+          format: "date-time"
+        updated_at:
+          type: "string"
+          format: "date-time"
+    PlanInput:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "user_id"
+        - "name"
+        - "exercises"
+      properties:
+        user_id:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+        name:
+          type: "string"
+          maxLength: 200
+          minLength: 1
+        notes:
+          type: "string"
+          maxLength: 4000
+          nullable: true
+          default: ""
+        exercises:
+          type: "array"
+          minItems: 1
+          maxItems: 100
+          items:
+            "$ref": "#/components/schemas/ExerciseInput"
+      description: "Full replacement. Owner cannot change. Every write generates new exercise entry IDs. Existing session snapshots remain unchanged."
+    Plan:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "user_id"
+        - "name"
+        - "notes"
+        - "exercises"
+        - "created_at"
+        - "updated_at"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+        user_id:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+        name:
+          type: "string"
+          maxLength: 200
+          minLength: 1
+        notes:
+          type: "string"
+          maxLength: 4000
+        exercises:
+          type: "array"
+          minItems: 1
+          maxItems: 100
+          items:
+            "$ref": "#/components/schemas/PlanExercise"
+        created_at:
+          type: "string"
+          format: "date-time"
+        updated_at:
+          type: "string"
+          format: "date-time"
+    SessionInput:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "user_id"
+        - "name"
+        - "performed_at"
+        - "exercises"
+      properties:
+        user_id:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+        name:
+          type: "string"
+          maxLength: 200
+          minLength: 1
+        notes:
+          type: "string"
+          maxLength: 4000
+          nullable: true
+          default: ""
+        performed_at:
+          type: "string"
+          format: "date-time"
+        plan_id:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+          nullable: true
+        exercises:
+          type: "array"
+          minItems: 1
+          maxItems: 100
+          items:
+            "$ref": "#/components/schemas/SessionExercise"
+      description: "Full replacement; owner cannot change. Optional plan_id must belong to user_id. plan_exercise_id links each actual entry to an entry in its saved plan snapshot and must not repeat. Omitted plan_exercise_id means unplanned. Keeping the same plan_id retains the original snapshot; changing/reattaching captures the current plan; null/omitted plan_id detaches. Times are nonzero RFC3339."
+    Session:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "user_id"
+        - "name"
+        - "notes"
+        - "performed_at"
+        - "plan_id"
+        - "exercises"
+        - "plan_snapshot"
+        - "created_at"
+        - "updated_at"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+        user_id:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+        name:
+          type: "string"
+          maxLength: 200
+          minLength: 1
+        notes:
+          type: "string"
+          maxLength: 4000
+        performed_at:
+          type: "string"
+          format: "date-time"
+        plan_id:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+          nullable: true
+        exercises:
+          type: "array"
+          minItems: 1
+          maxItems: 100
+          items:
+            "$ref": "#/components/schemas/SessionExercise"
+        plan_snapshot:
+          type: "object"
+          additionalProperties: false
+          required:
+            - "id"
+            - "user_id"
+            - "name"
+            - "notes"
+            - "exercises"
+            - "created_at"
+            - "updated_at"
+          properties:
+            id:
+              type: "string"
+              format: "uuid"
+              description: "Nonzero UUID"
+            user_id:
+              type: "string"
+              format: "uuid"
+              description: "Nonzero UUID"
+            name:
+              type: "string"
+              maxLength: 200
+              minLength: 1
+            notes:
+              type: "string"
+              maxLength: 4000
+            exercises:
+              type: "array"
+              minItems: 1
+              maxItems: 100
+              items:
+                "$ref": "#/components/schemas/PlanExercise"
+            created_at:
+              type: "string"
+              format: "date-time"
+            updated_at:
+              type: "string"
+              format: "date-time"
+          nullable: true
+        created_at:
+          type: "string"
+          format: "date-time"
+        updated_at:
+          type: "string"
+          format: "date-time"
+    Totals:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "sets"
+        - "repetitions"
+        - "volume_kg"
+        - "minutes"
+      properties:
+        sets:
+          type: "integer"
+        repetitions:
+          type: "integer"
+        volume_kg:
+          type: "number"
+          description: "Sum of repetitions times weight_kg across all sets."
+        minutes:
+          type: "number"
+    SetComparison:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "number"
+        - "planned"
+        - "actual"
+        - "repetitions_delta"
+        - "weight_kg_delta"
+      properties:
+        number:
+          type: "integer"
+          minimum: 1
+        planned:
+          type: "object"
+          additionalProperties: false
+          required:
+            - "repetitions"
+            - "weight_kg"
+          properties:
+            repetitions:
+              type: "integer"
+              minimum: 1
+              maximum: 1000
+            weight_kg:
+              type: "number"
+              minimum: 0
+              maximum: 2000
+          nullable: true
+        actual:
+          type: "object"
+          additionalProperties: false
+          required:
+            - "repetitions"
+            - "weight_kg"
+          properties:
+            repetitions:
+              type: "integer"
+              minimum: 1
+              maximum: 1000
+            weight_kg:
+              type: "number"
+              minimum: 0
+              maximum: 2000
+          nullable: true
+        repetitions_delta:
+          type: "integer"
+          nullable: true
+        weight_kg_delta:
+          type: "number"
+          nullable: true
+    ExerciseComparison:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "plan_exercise_id"
+        - "status"
+        - "planned"
+        - "actual"
+        - "planned_totals"
+        - "actual_totals"
+        - "delta"
+        - "avg_bpm_delta"
+        - "sets"
+      properties:
+        plan_exercise_id:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+          nullable: true
+        status:
+          type: "string"
+          enum:
+            - "matched"
+            - "missed"
+            - "unplanned"
+        planned:
+          type: "object"
+          additionalProperties: false
+          required:
+            - "name"
+            - "kind"
+          properties:
+            name:
+              type: "string"
+              maxLength: 200
+              minLength: 1
+            kind:
+              type: "string"
+              enum:
+                - "strength"
+                - "cardio"
+            sets:
+              type: "array"
+              items:
+                "$ref": "#/components/schemas/Set"
+              maxItems: 100
+              nullable: true
+            minutes:
+              type: "number"
+              exclusiveMinimum: true
+              minimum: 0
+              maximum: 1440
+              nullable: true
+            avg_bpm:
+              type: "integer"
+              minimum: 1
+              maximum: 300
+              nullable: true
+          description: "Names are trimmed, kind is lowercased. Strength requires 1..100 sets with explicit weight_kg (0 for bodyweight), and no non-null cardio metrics. Cardio requires minutes and no sets; avg_bpm is optional. Exercise order and set order are preserved."
+          nullable: true
+        actual:
+          type: "object"
+          additionalProperties: false
+          required:
+            - "name"
+            - "kind"
+          properties:
+            name:
+              type: "string"
+              maxLength: 200
+              minLength: 1
+            kind:
+              type: "string"
+              enum:
+                - "strength"
+                - "cardio"
+            sets:
+              type: "array"
+              items:
+                "$ref": "#/components/schemas/Set"
+              maxItems: 100
+              nullable: true
+            minutes:
+              type: "number"
+              exclusiveMinimum: true
+              minimum: 0
+              maximum: 1440
+              nullable: true
+            avg_bpm:
+              type: "integer"
+              minimum: 1
+              maximum: 300
+              nullable: true
+          description: "Names are trimmed, kind is lowercased. Strength requires 1..100 sets with explicit weight_kg (0 for bodyweight), and no non-null cardio metrics. Cardio requires minutes and no sets; avg_bpm is optional. Exercise order and set order are preserved."
+          nullable: true
+        planned_totals:
+          "$ref": "#/components/schemas/Totals"
+        actual_totals:
+          "$ref": "#/components/schemas/Totals"
+        delta:
+          "$ref": "#/components/schemas/Totals"
+        avg_bpm_delta:
+          type: "integer"
+          nullable: true
+          description: "Actual minus planned; null when either BPM is unknown."
+        sets:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/SetComparison"
+    Comparison:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "plan_id"
+        - "session_id"
+        - "user_id"
+        - "plan_updated_at"
+        - "planned_totals"
+        - "actual_totals"
+        - "delta"
+        - "exercises"
+      properties:
+        plan_id:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+        session_id:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+        user_id:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+        plan_updated_at:
+          type: "string"
+          format: "date-time"
+        planned_totals:
+          "$ref": "#/components/schemas/Totals"
+        actual_totals:
+          "$ref": "#/components/schemas/Totals"
+        delta:
+          "$ref": "#/components/schemas/Totals"
+        exercises:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/ExerciseComparison"
+      description: "Uses the session's saved plan version. All deltas are actual minus planned. Planned entries come first in plan order; unplanned entries follow in session order. Sets are compared by ordinal position. Missing records are null, not invented measurements. Matched means linked, not that the target was met. BPM is not aggregated across exercises."
+    Error:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "error"
+      properties:
+        error:
+          type: "object"
+          additionalProperties: false
+          required:
+            - "code"
+            - "message"
+          properties:
+            code:
+              type: "string"
+              enum:
+                - "invalid_request"
+                - "invalid_id"
+                - "validation_failed"
+                - "invalid_reference"
+                - "resource_in_use"
+                - "user_not_found"
+                - "measurement_not_found"
+                - "plan_not_found"
+                - "session_not_found"
+                - "comparison_not_found"
+                - "not_found"
+                - "method_not_allowed"
+                - "not_ready"
+                - "internal_error"
+            message:
+              type: "string"
+    Health:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "status"
+      properties:
+        status:
+          type: "string"
+          enum:
+            - "ok"
