@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -50,7 +51,9 @@ func Open(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	paths, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*.up.sql"))
+	// Locate migrations relative to this file, so any package's tests can use it.
+	_, self, _, _ := runtime.Caller(0)
+	paths, err := filepath.Glob(filepath.Join(filepath.Dir(self), "..", "..", "migrations", "*.up.sql"))
 	if err != nil || len(paths) == 0 {
 		t.Fatalf("migration files: %v", err)
 	}
