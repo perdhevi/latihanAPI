@@ -112,6 +112,8 @@ jobs:
       - run: cp .env.example .env
       - run: docker compose up --build --detach --wait
       - run: sh scripts/smoke-test.sh
+      - name: Disaster-recovery drill (backup, destroy, restore, verify)
+        run: sh scripts/backup-restore-test.sh
       - name: Scan the image for fixable HIGH and CRITICAL vulnerabilities
         run: |
           docker save latihan-api:local -o image.tar
@@ -123,6 +125,7 @@ jobs:
         env:
           DOMAIN: api.example.com
           ACME_EMAIL: ci@example.com
+          BACKUP_AGE_RECIPIENT: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
       - if: failure()
         run: docker compose logs
       - if: always()

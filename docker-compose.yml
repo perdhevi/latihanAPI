@@ -102,6 +102,32 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
 
+  # Encrypted backups (deploy/backup). Always on in production; locally:
+  #   BACKUP_AGE_RECIPIENT=age1... docker compose --profile backup up -d backup
+  backup:
+    build: ./deploy/backup
+    image: latihan-backup:local
+    profiles: [backup]
+    environment:
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+    secrets: [migrator_password]
+    volumes:
+      - ${BACKUP_DIR:-./backups}:/backups
+    # Owner of the backup files on the host.
+    user: "${BACKUP_UID:-1000}:${BACKUP_GID:-1000}"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # Unhealthy when no backup has succeeded for 26 hours.
+      test: ["CMD-SHELL", "test $$(( $$(date +%s) - $$(cat /backups/.last-success 2>/dev/null || echo 0) )) -lt 93600"]
+      interval: 5m
+      start_period: 10m
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
   # Optional: docker compose --profile observability up
   # Prometheus UI on http://localhost:9091, Jaeger UI on http://localhost:16686.
   # Set OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 in .env to send traces.

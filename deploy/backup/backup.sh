@@ -1,4 +1,6 @@
 #!/bin/sh
+# shellcheck shell=busybox
+# Runs in the backup image, whose /bin/sh is BusyBox ash: it has pipefail.
 # Encrypted database backups: every BACKUP_INTERVAL_SECONDS (default a day),
 # or once with --once.
 #

@@ -121,6 +121,34 @@ refuses anything not pinned by digest or not signed by this repository's
 release workflow for a `v*` tag, so neither a pushed-but-unscanned image nor
 an image from another source can be deployed.
 
+## Backups
+
+On your own machine, never the server, create the key pair that protects backups:
+
+```sh
+age-keygen -o latihan-backup-key.txt     # keep this file offline, and a copy of it
+```
+
+Put the printed public key (`age1...`) in the server's `.env` as
+`BACKUP_AGE_RECIPIENT`. Production refuses to start without it. Backups land in
+`./backups` every night; copy them off the machine (for example with
+`rclone copy backups remote:latihan-backups` from cron), since a backup on the
+same disk does not survive losing the disk. `docker compose ps` shows the backup
+container unhealthy if no backup has succeeded for 26 hours.
+
+To restore, stop the API, bring the private key to the server for this one run,
+and remove it afterwards:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.prod.yml stop latihan-api
+docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm \n  -v "$PWD/latihan-backup-key.txt:/identity:ro" backup restore.sh /backups/latihan-<time>.dump.age
+docker compose -f docker-compose.yml -f docker-compose.prod.yml start latihan-api
+shred -u latihan-backup-key.txt
+```
+
+The restore is one transaction: it applies completely or not at all. Rehearse it:
+CI runs the same drill (`scripts/backup-restore-test.sh`) on every push.
+
 ## Rollback
 
 `deploy/.previous` holds the commit and image of the release before the current

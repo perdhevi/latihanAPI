@@ -70,6 +70,13 @@ services:
     pids_limit: 200
     logging: *logging
 
+  backup:
+    profiles: !reset []
+    environment:
+      BACKUP_AGE_RECIPIENT: "${BACKUP_AGE_RECIPIENT:?production requires encrypted backups; set BACKUP_AGE_RECIPIENT}"
+    restart: unless-stopped
+    logging: *logging
+
   migrate:
     logging: *logging
 

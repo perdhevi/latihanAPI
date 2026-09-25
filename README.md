@@ -488,6 +488,50 @@ existed have neither role. For development data, recreate the volume with
 and run migrations as the migrator. The API warns at startup when a remote
 database connection is not certificate-verified.
 
+## Health data: export, erasure, audit and backups
+
+Measurements and workouts are health data. Users can take all of it and remove
+all of it, every change is recorded without copying it, and backups are
+encrypted and restorable.
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /api/v1/account/export` | Streams one JSON document (`latihan-export/1`) with the profile, linked identities, and every measurement, plan and session. Audited; limited by `RATE_LIMIT_EXPORT` (default 4 per hour). A failure mid-way aborts the connection, so a truncated export is never mistaken for a complete one. |
+| `DELETE /api/v1/account` | Erases everything in one transaction (sessions, plans, measurements, profile, identity links, and stored idempotency responses, which can hold health data), then the built-in provider's login account. Needs only a valid token, so an interrupted erasure can be finished; repeating it is harmless. |
+
+Plain `DELETE /api/v1/users/me` still refuses (409) while history exists, so
+nobody erases their data by accident. Accounts at Firebase or Cognito must be
+deleted there by the client.
+
+**Audit log.** Database triggers record every insert, update and delete of
+profiles, measurements, plans and sessions, in the same transaction as the change,
+plus exports and erasures. Rows hold only who, what and which record, never values.
+The API role may only append: it cannot read, change or delete audit rows, except
+through `purge_audit_events`, which refuses to delete anything newer than 30 days.
+After an erasure the audit rows remain under a UUID that no longer leads to anyone.
+
+**Backups.** The `backup` service (always on in production) takes a nightly
+`pg_dump`, encrypts it to an [age](https://age-encryption.org) public key, and
+deletes backups older than `BACKUP_RETENTION_DAYS` (30). The server can write
+backups but not read them. The container turns unhealthy if no backup succeeded
+for 26 hours. `deploy/backup/restore.sh` restores in one transaction and re-applies
+the audit log's narrower privileges, which a plain restore would silently widen;
+CI proves the whole cycle on every push by backing up, destroying every volume,
+restoring and checking data and privileges. See [docs/DEPLOY.md](docs/DEPLOY.md).
+
+| Data | Kept for | Then |
+| --- | --- | --- |
+| Profile, measurements, plans, sessions | Until the user deletes or erases them | Gone from the database at once |
+| Same data in backups | Up to `BACKUP_RETENTION_DAYS` (30) | Backup file deleted |
+| Stored idempotency responses | 24 hours | Purged hourly; erased with the account |
+| Refresh tokens (built-in provider) | Until expiry, then pruned | Erased with the account |
+| Audit events (identifiers only) | `AUDIT_RETENTION` (1 year, at least 30 days) | Purged hourly |
+| Application logs (client IP, user ID, paths) | Docker log rotation: 5 x 10 MB in production | Overwritten |
+
+`LOG_CLIENT_IP=truncated` logs client networks (/24 or /48) instead of addresses.
+This is engineering, not legal advice: publishing a privacy policy and having a
+legal basis for processing health data are still up to you.
+
 ## Observability
 
 The API serves `/metrics` on a separate admin listener, `ADMIN_ADDR` (default

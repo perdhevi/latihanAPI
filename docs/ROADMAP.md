@@ -34,7 +34,7 @@ VM: Caddy (TLS :443) → latihan-api → PostgreSQL   (only Caddy publishes port
 | phase-08 | Secrets, TLS, least privilege | `X_FILE` secrets and Compose secrets; migrator/app/superuser role split (app has DML only, proven by a CI smoke test); Caddy TLS overlay with security headers and a single trusted proxy; warning for unverified remote database TLS | Done |
 | phase-09 | Shipping | Distroless image pinned by digest (all images pinned); Trivy gate in CI and releases; release workflow with SBOM, SLSA provenance and keyless cosign signing; approval-gated SSH deploy that verifies signatures; production limits and log rotation; VM baseline guide | Done |
 | phase-10 | Proving it | 12 fuzz targets with invariants (CI job); OpenAPI contract validation of every integration-test response plus an error-code drift check; attacker-view regression suite; k6 capacity and pressure tests with measured results | Done |
-| phase-11 | Health data responsibly | Export, erasure, audit log, backups and restore drills | Planned |
+| phase-11 | Health data responsibly | Streaming export; one-transaction erasure including login accounts and stored responses; trigger-based append-only audit log with a 30-day purge floor; encrypted nightly backups with retention, health check and a CI disaster-recovery drill; retention table; optional IP truncation | Done |
 
 ## Authentication design
 

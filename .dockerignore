@@ -9,3 +9,4 @@ coverage.out
 .keys
 secrets
 !secrets/dev
+backups
