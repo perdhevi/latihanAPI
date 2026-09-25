@@ -18,7 +18,7 @@ type Pinger interface{ Ping(context.Context) error }
 // registers itself (such as login) are public.
 func NewRouter(sessions *training.Service, profiles *profile.Service, db Pinger, authenticator auth.Authenticator, logger *slog.Logger, opts Options) http.Handler {
 	l := newLimits(opts)
-	h := &handlers{training: sessions, profiles: profiles, auth: authenticator, logger: logger, limits: l, requireIfMatch: opts.RequireIfMatch, idempotency: opts.Idempotency}
+	h := &handlers{training: sessions, profiles: profiles, auth: authenticator, logger: logger, limits: l, requireIfMatch: opts.RequireIfMatch, idempotency: opts.Idempotency, metrics: opts.Metrics}
 	mux := http.NewServeMux()
 	// Provider routes get their own mux so the stricter public limit can be
 	// applied to exactly the routes the provider mounted.
@@ -76,5 +76,5 @@ func NewRouter(sessions *training.Service, profiles *profile.Service, db Pinger,
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "route not found")
 	})
-	return middleware(l.protect(mux, providerMux, h), logger, l)
+	return middleware(l.protect(mux, providerMux, h), logger, l, opts.Metrics)
 }

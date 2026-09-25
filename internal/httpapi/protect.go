@@ -12,6 +12,7 @@ import (
 
 	"github.com/perdhevi/latihanAPI/internal/idempotency"
 	"github.com/perdhevi/latihanAPI/internal/ratelimit"
+	"github.com/perdhevi/latihanAPI/internal/telemetry"
 )
 
 // Options holds the abuse limits and HTTP semantics. The zero value disables
@@ -34,6 +35,8 @@ type Options struct {
 	RequireIfMatch bool
 	// Idempotency enables Idempotency-Key on creating POSTs. Nil disables it.
 	Idempotency *idempotency.Store
+	// Metrics records request, rejection and auth metrics. Nil disables them.
+	Metrics *telemetry.Metrics
 }
 
 type limits struct {
@@ -117,17 +120,18 @@ func (l *limits) protect(api, provider *http.ServeMux, h *handlers) http.Handler
 			case l.inFlight <- struct{}{}:
 				defer func() { <-l.inFlight }()
 			default:
+				h.metrics.Rejected("overloaded")
 				w.Header().Set("Retry-After", "1")
 				writeError(w, http.StatusServiceUnavailable, "overloaded", "server is busy; retry shortly")
 				return
 			}
 		}
 		key := rateKey(clientAddr(r))
-		if !h.allow(w, r, l.perIP, "ip:"+key) {
+		if !h.allow(w, r, l.perIP, "ip", "ip:"+key) {
 			return
 		}
 		if _, pattern := provider.Handler(r); pattern != "" {
-			if !h.allow(w, r, l.public, "public:"+key) {
+			if !h.allow(w, r, l.public, "public", "public:"+key) {
 				return
 			}
 			provider.ServeHTTP(w, r)
@@ -138,15 +142,19 @@ func (l *limits) protect(api, provider *http.ServeMux, h *handlers) http.Handler
 }
 
 // allow takes a token from limiter for key, answering 429 when there is none.
-func (h *handlers) allow(w http.ResponseWriter, r *http.Request, limiter *ratelimit.Limiter, key string) bool {
+// name labels the rejection metric.
+func (h *handlers) allow(w http.ResponseWriter, r *http.Request, limiter *ratelimit.Limiter, name, key string) bool {
 	ok, retryAfter, err := limiter.Allow(key)
 	if ok {
 		return true
 	}
+	reason := name
 	if errors.Is(err, ratelimit.ErrTooManyKeys) {
+		reason = "too_many_clients"
 		h.logger.WarnContext(r.Context(), "rate limiter full; refusing new clients", "request_id", r.Context().Value(requestIDKey{}))
 		retryAfter = time.Minute
 	}
+	h.metrics.Rejected(reason)
 	seconds := int(math.Ceil(retryAfter.Seconds()))
 	w.Header().Set("Retry-After", strconv.Itoa(max(seconds, 1)))
 	writeError(w, http.StatusTooManyRequests, "rate_limited", "too many requests; retry later")

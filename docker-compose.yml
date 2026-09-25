@@ -63,6 +63,23 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
 
+  # Optional: docker compose --profile observability up
+  # Prometheus UI on http://localhost:9091, Jaeger UI on http://localhost:16686.
+  # Set OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 in .env to send traces.
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    profiles: [observability]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "127.0.0.1:9091:9090"
+
+  jaeger:
+    image: jaegertracing/jaeger:2.21.0
+    profiles: [observability]
+    ports:
+      - "127.0.0.1:16686:16686"
+
 volumes:
   postgres-data:
   jwt-keys:

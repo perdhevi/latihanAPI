@@ -34,6 +34,10 @@ type Config struct {
 
 	// RequireIfMatch makes clients prove which version they are changing.
 	RequireIfMatch bool
+
+	// AdminAddr serves /metrics (and optionally pprof). Never publish it.
+	AdminAddr  string
+	AdminPprof bool
 }
 
 func Load() (Config, error) {
@@ -78,6 +82,15 @@ func Load() (Config, error) {
 	c.DBMaxConns = int32(maxConns) //nolint:gosec // G115: bounded to 1..1000 above
 	if c.DBStatementTimeout, err = time.ParseDuration(getenv("DB_STATEMENT_TIMEOUT", "5s")); err != nil || c.DBStatementTimeout < 100*time.Millisecond || c.DBStatementTimeout > time.Minute {
 		return Config{}, errors.New("DB_STATEMENT_TIMEOUT must be a duration between 100ms and 1m")
+	}
+	c.AdminAddr = getenv("ADMIN_ADDR", ":9090")
+	if _, _, err := net.SplitHostPort(c.AdminAddr); err != nil || c.AdminAddr == c.HTTPAddr {
+		return Config{}, errors.New("ADMIN_ADDR must be host:port and differ from HTTP_ADDR")
+	}
+	if raw := os.Getenv("ADMIN_PPROF"); raw != "" {
+		if c.AdminPprof, err = strconv.ParseBool(raw); err != nil {
+			return Config{}, errors.New("ADMIN_PPROF must be true or false")
+		}
 	}
 	if raw := os.Getenv("REQUIRE_IF_MATCH"); raw != "" {
 		if c.RequireIfMatch, err = strconv.ParseBool(raw); err != nil {

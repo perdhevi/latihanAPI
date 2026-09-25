@@ -421,6 +421,48 @@ row lock), so of two writers holding the same ETag exactly one succeeds. `*`
 matches any version; weak ETags never match. Without `If-Match` the write applies
 to the current version, unless `REQUIRE_IF_MATCH=true`, which answers 428.
 
+## Observability
+
+The API serves `/metrics` on a separate admin listener, `ADMIN_ADDR` (default
+`:9090`). Compose never publishes that port: Prometheus scrapes it over the Compose
+network. `/debug/pprof` is added only with `ADMIN_PPROF=true`, because profiles
+expose internals and a CPU profile costs CPU.
+
+```sh
+docker compose --profile observability up --build
+```
+
+That also starts Prometheus (http://localhost:9091) and Jaeger (http://localhost:16686).
+Set `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318` in `.env` to send traces.
+
+| Metric | Labels | Meaning |
+| --- | --- | --- |
+| `latihan_http_requests_total` | `route`, `method`, `code` | Requests. `route` is the pattern, such as `/api/v1/sessions/{id}`, never the raw path |
+| `latihan_http_request_duration_seconds` | `route`, `method` | Latency histogram |
+| `latihan_http_requests_in_flight` | | Requests being served |
+| `latihan_http_rejected_total` | `reason` | Refused before a handler: `ip`, `user`, `public`, `overloaded`, `too_many_clients` |
+| `latihan_auth_failures_total` | `reason` | `unauthenticated`, `unavailable`, `profile_required` |
+| `latihan_idempotent_replays_total` | | Responses replayed for a repeated `Idempotency-Key` |
+| `latihan_http_panics_total` | | Recovered handler panics |
+| `latihan_db_pool_*` | | Connections by state, pool size, waits for a free connection |
+| `latihan_build_info` | `version`, `go_version` | Which build is running (`docker build --build-arg VERSION=...`) |
+
+Labels are bounded on purpose: raw paths would create a new time series for every
+ID a client touches, and unknown HTTP methods are folded into `OTHER`.
+
+**Traces** (OpenTelemetry) are off unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set;
+the standard `OTEL_*` variables choose the exporter and sampler (for example
+`OTEL_TRACES_SAMPLER=parentbased_traceidratio` with `OTEL_TRACES_SAMPLER_ARG=0.1`).
+An incoming W3C `traceparent` is continued. Each request is a server span named
+after its route, and every PostgreSQL query is a child span with its SQL text but
+not its arguments, which hold user data.
+
+**Logs** are JSON. Every line logged during a request carries `trace_id` and
+`span_id`; the request line adds `request_id`, `client_ip`, `user_id` (once
+authenticated), method, path, status and duration. A panic logs its stack trace and
+answers 500, except `http.ErrAbortHandler`, which is passed on to `net/http` to
+close the connection as intended.
+
 ## Abuse limits
 
 Every limit has a default, so a fresh deployment is protected; tune them in `.env`.
@@ -477,6 +519,9 @@ the log level and `AUTH_*` settings come from `.env`.
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `AUTH_PROVIDER` | Required | `jwt`, `firebase`, `cognito`, `oidc`, or a comma-separated list; see [Authentication](#authentication) and `.env.example` |
 | `AUTH_*` | Provider-specific | Settings for the selected provider |
+| `ADMIN_ADDR` | `:9090` | Admin listener for `/metrics`; never publish it |
+| `ADMIN_PPROF` | `false` | Adds `/debug/pprof` to the admin listener |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | Turns on trace export (OTLP/HTTP) |
 | `REQUIRE_IF_MATCH` | `false` | Reject PUT and DELETE without `If-Match` (428); see [Safe retries](#safe-retries) |
 | Abuse limits | See [Abuse limits](#abuse-limits) | `RATE_LIMIT_*`, `MAX_IN_FLIGHT`, `TRUSTED_PROXIES`, `DB_*` |
 | `TEST_DATABASE_URL` | Required for integration tests | Disposable test database |
@@ -548,7 +593,9 @@ The integration tag fails if its database URL is missing. Tests cover CRUD,
 ownership constraints, stable plan snapshots, plan changes/detachment, comparison
 metrics, missing/unplanned exercises, history ordering, pagination, cancellation,
 deletion conflicts, migration rollback/reapplication, identity linking, the 401/403/409/503
-authentication responses, safe retries (exact replay, key reuse, in-progress and abandoned keys, parallel
+authentication responses, observability (route-pattern labels under many IDs, rejection, auth and panic
+metrics, panic stacks, ErrAbortHandler, trace continuation, log correlation, query
+spans without arguments, pprof off by default), safe retries (exact replay, key reuse, in-progress and abandoned keys, parallel
 retries creating one record; stale and concurrent If-Match writes), the built-in provider end to end (register, profile,
 refresh, reuse detection, logout; concurrent refreshes of one token), abuse limits (per-IP,
 per-user and auth-route limits, spoofed `X-Forwarded-For`, IPv6 /64 grouping, load

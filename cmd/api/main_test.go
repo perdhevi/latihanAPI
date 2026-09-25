@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/perdhevi/latihanAPI/internal/telemetry"
 )
 
 func TestServerRefusesOversizedHeaders(t *testing.T) {
@@ -26,6 +28,28 @@ func TestServerRefusesOversizedHeaders(t *testing.T) {
 		_ = resp.Body.Close()
 		if resp.StatusCode != want {
 			t.Errorf("%d-byte header: %d, want %d", size, resp.StatusCode, want)
+		}
+	}
+}
+
+func TestAdminServer(t *testing.T) {
+	metrics := telemetry.NewMetrics("v-test")
+	for _, withPprof := range []bool{false, true} {
+		h := newAdminServer("", metrics, withPprof).Handler
+		get := func(path string) *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
+			return w
+		}
+		if w := get("/metrics"); w.Code != 200 || !strings.Contains(w.Body.String(), `latihan_build_info{go_version=`) || !strings.Contains(w.Body.String(), `version="v-test"`) {
+			t.Fatalf("metrics: %d", w.Code)
+		}
+		wantPprof := http.StatusNotFound
+		if withPprof {
+			wantPprof = http.StatusOK
+		}
+		if w := get("/debug/pprof/"); w.Code != wantPprof {
+			t.Fatalf("pprof enabled=%v: %d", withPprof, w.Code)
 		}
 	}
 }

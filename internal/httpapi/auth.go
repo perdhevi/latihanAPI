@@ -39,10 +39,12 @@ func (h *handlers) authenticated(next http.HandlerFunc) http.HandlerFunc {
 		id, err := h.auth.Authenticate(r)
 		switch {
 		case errors.Is(err, auth.ErrUnauthenticated):
+			h.metrics.AuthFailed("unauthenticated")
 			challenge(w, r)
 			return
 		case err != nil:
 			// The provider could not decide, for example because its key server is down.
+			h.metrics.AuthFailed("unavailable")
 			h.logger.ErrorContext(r.Context(), "authentication unavailable", "request_id", r.Context().Value(requestIDKey{}), "error", err)
 			writeError(w, http.StatusServiceUnavailable, "auth_unavailable", "authentication is temporarily unavailable")
 			return
@@ -51,13 +53,16 @@ func (h *handlers) authenticated(next http.HandlerFunc) http.HandlerFunc {
 			challenge(w, r)
 			return
 		}
-		if !h.allow(w, r, h.limits.perUser, "user:"+id.Issuer+"|"+id.Subject) {
+		if !h.allow(w, r, h.limits.perUser, "user", "user:"+id.Issuer+"|"+id.Subject) {
 			return
 		}
 		userID, err := h.profiles.ResolveIdentity(r.Context(), profile.Identity{Issuer: id.Issuer, Subject: id.Subject})
 		if err != nil && !errors.Is(err, profile.ErrNotFound) {
 			h.fail(w, r, err, "user")
 			return
+		}
+		if info := infoFrom(r.Context()); info != nil {
+			info.userID = userID
 		}
 		ctx := context.WithValue(r.Context(), principalKey{}, principal{identity: id, userID: userID})
 		next(w, r.WithContext(ctx))
@@ -68,6 +73,7 @@ func (h *handlers) authenticated(next http.HandlerFunc) http.HandlerFunc {
 func (h *handlers) withUser(next http.HandlerFunc) http.HandlerFunc {
 	return h.authenticated(func(w http.ResponseWriter, r *http.Request) {
 		if principalFrom(r.Context()).userID == uuid.Nil {
+			h.metrics.AuthFailed("profile_required")
 			writeError(w, http.StatusForbidden, "profile_required", "create your profile with POST /api/v1/users first")
 			return
 		}

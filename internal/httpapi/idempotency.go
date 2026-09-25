@@ -63,6 +63,7 @@ func (h *handlers) idempotent(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusConflict, "idempotency_key_in_progress", "a request with this Idempotency-Key is still running")
 			return
 		case outcome == idempotency.Replay:
+			h.metrics.Replayed()
 			for name, value := range stored.Header {
 				w.Header().Set(name, value)
 			}

@@ -58,6 +58,8 @@ func TestAbuseSettings(t *testing.T) {
 		"MAX_IN_FLIGHT":        "0",
 		"DB_MAX_CONNS":         "5000",
 		"DB_STATEMENT_TIMEOUT": "2h",
+		"ADMIN_ADDR":           ":8080",
+		"ADMIN_PPROF":          "maybe",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv(name, value)

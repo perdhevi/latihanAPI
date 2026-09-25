@@ -15,6 +15,7 @@ import (
 	"github.com/perdhevi/latihanAPI/internal/httpjson"
 	"github.com/perdhevi/latihanAPI/internal/idempotency"
 	"github.com/perdhevi/latihanAPI/internal/profile"
+	"github.com/perdhevi/latihanAPI/internal/telemetry"
 	"github.com/perdhevi/latihanAPI/internal/training"
 	"github.com/perdhevi/latihanAPI/internal/validation"
 )
@@ -38,6 +39,7 @@ type handlers struct {
 	requireIfMatch bool
 	// idempotency stores responses for Idempotency-Key retries; nil disables it.
 	idempotency *idempotency.Store
+	metrics     *telemetry.Metrics
 }
 
 func (h *handlers) fail(w http.ResponseWriter, r *http.Request, err error, resource string) {

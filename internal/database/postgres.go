@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -16,6 +17,8 @@ type Options struct {
 	// StatementTimeout is enforced by PostgreSQL itself, so a runaway query
 	// stops even if the client never cancels it.
 	StatementTimeout time.Duration
+	// Tracer observes every query, for example to create trace spans.
+	Tracer pgx.QueryTracer
 }
 
 func Open(ctx context.Context, url string, opts Options) (*pgxpool.Pool, error) {
@@ -25,6 +28,7 @@ func Open(ctx context.Context, url string, opts Options) (*pgxpool.Pool, error) 
 	}
 	cfg.ConnConfig.ConnectTimeout = 5 * time.Second
 	cfg.MaxConns = opts.MaxConns
+	cfg.ConnConfig.Tracer = opts.Tracer
 	cfg.MaxConnLifetime = time.Hour
 	cfg.MaxConnIdleTime = 5 * time.Minute
 	params := cfg.ConnConfig.RuntimeParams
