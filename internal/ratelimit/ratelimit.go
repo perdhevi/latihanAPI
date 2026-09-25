@@ -39,7 +39,8 @@ func ParsePolicy(s string) (Policy, error) {
 		return Policy{}, fmt.Errorf("rate limit %q: want N/unit:burst, such as 50/s:100, or off", s)
 	}
 	n, err := strconv.ParseFloat(count, 64)
-	if err != nil || n <= 0 || math.IsInf(n, 0) {
+	// !(n > 0) also rejects NaN, which every comparison reports as false.
+	if err != nil || !(n > 0) || math.IsInf(n, 0) {
 		return Policy{}, fmt.Errorf("rate limit %q: rate must be a positive number", s)
 	}
 	per := map[string]time.Duration{"s": time.Second, "m": time.Minute, "h": time.Hour}[unit]

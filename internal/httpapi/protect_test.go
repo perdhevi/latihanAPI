@@ -41,15 +41,15 @@ func TestPerIPLimit(t *testing.T) {
 	h := limitedRouter(&fakeTraining{}, Options{PerIP: ratelimit.MustParse("1/m:2")})
 	session := "/api/v1/sessions/" + uuid.NewString()
 	for range 2 {
-		if w := from(h, "198.51.100.1:1000", "", "Bearer test|athlete", "GET", session); w.Code != 200 {
+		if w := from(h, "198.51.100.1:1000", "", "Bearer test.athlete", "GET", session); w.Code != 200 {
 			t.Fatalf("within burst: %d", w.Code)
 		}
 	}
-	w := from(h, "198.51.100.1:1000", "", "Bearer test|athlete", "GET", session)
+	w := from(h, "198.51.100.1:1000", "", "Bearer test.athlete", "GET", session)
 	if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") == "" || !strings.Contains(w.Body.String(), `"rate_limited"`) {
 		t.Fatalf("over limit: %d %v %s", w.Code, w.Header(), w.Body)
 	}
-	if w := from(h, "198.51.100.2:1000", "", "Bearer test|athlete", "GET", session); w.Code != 200 {
+	if w := from(h, "198.51.100.2:1000", "", "Bearer test.athlete", "GET", session); w.Code != 200 {
 		t.Fatal("another address was limited")
 	}
 	if w := from(h, "198.51.100.1:1000", "", "", "GET", "/health"); w.Code != 200 {
@@ -61,7 +61,7 @@ func TestPerIPLimit(t *testing.T) {
 		if i == 2 {
 			want = http.StatusTooManyRequests
 		}
-		if w := from(h, addr, "", "Bearer test|athlete", "GET", session); w.Code != want {
+		if w := from(h, addr, "", "Bearer test.athlete", "GET", session); w.Code != want {
 			t.Fatalf("%s: %d, want %d", addr, w.Code, want)
 		}
 	}
@@ -111,7 +111,7 @@ func TestPublicLimitCoversOnlyProviderRoutes(t *testing.T) {
 		t.Fatalf("second login: %d", w.Code)
 	}
 	for range 3 {
-		if w := from(h, "198.51.100.1:1", "", "Bearer test|athlete", "GET", "/api/v1/users/me"); w.Code != 200 {
+		if w := from(h, "198.51.100.1:1", "", "Bearer test.athlete", "GET", "/api/v1/users/me"); w.Code != 200 {
 			t.Fatalf("API route hit the login limit: %d", w.Code)
 		}
 	}
@@ -119,13 +119,13 @@ func TestPublicLimitCoversOnlyProviderRoutes(t *testing.T) {
 
 func TestPerUserLimitFollowsTheUser(t *testing.T) {
 	h := limitedRouter(&fakeTraining{}, Options{PerUser: ratelimit.MustParse("1/m:1")})
-	if w := from(h, "198.51.100.1:1", "", "Bearer test|athlete", "GET", "/api/v1/users/me"); w.Code != 200 {
+	if w := from(h, "198.51.100.1:1", "", "Bearer test.athlete", "GET", "/api/v1/users/me"); w.Code != 200 {
 		t.Fatal(w.Code)
 	}
-	if w := from(h, "198.51.100.2:1", "", "Bearer test|athlete", "GET", "/api/v1/users/me"); w.Code != http.StatusTooManyRequests {
+	if w := from(h, "198.51.100.2:1", "", "Bearer test.athlete", "GET", "/api/v1/users/me"); w.Code != http.StatusTooManyRequests {
 		t.Fatalf("same user from a new address: %d", w.Code)
 	}
-	if w := from(h, "198.51.100.1:1", "", "Bearer test|someone-else", "POST", "/api/v1/users"); w.Code == http.StatusTooManyRequests {
+	if w := from(h, "198.51.100.1:1", "", "Bearer test.someone-else", "POST", "/api/v1/users"); w.Code == http.StatusTooManyRequests {
 		t.Fatal("another user was limited")
 	}
 }
@@ -135,10 +135,10 @@ func TestInFlightCap(t *testing.T) {
 	h := limitedRouter(repo, Options{MaxInFlight: 1})
 	done := make(chan int)
 	go func() {
-		done <- from(h, "198.51.100.1:1", "", "Bearer test|athlete", "GET", "/api/v1/sessions/"+uuid.NewString()).Code
+		done <- from(h, "198.51.100.1:1", "", "Bearer test.athlete", "GET", "/api/v1/sessions/"+uuid.NewString()).Code
 	}()
 	<-repo.entered // the first request now holds the only slot
-	w := from(h, "198.51.100.2:1", "", "Bearer test|athlete", "GET", "/api/v1/users/me")
+	w := from(h, "198.51.100.2:1", "", "Bearer test.athlete", "GET", "/api/v1/users/me")
 	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "1" {
 		t.Fatalf("over capacity: %d", w.Code)
 	}
@@ -149,7 +149,7 @@ func TestInFlightCap(t *testing.T) {
 	if code := <-done; code != 200 {
 		t.Fatalf("held request: %d", code)
 	}
-	if w := from(h, "198.51.100.2:1", "", "Bearer test|athlete", "GET", "/api/v1/users/me"); w.Code != 200 {
+	if w := from(h, "198.51.100.2:1", "", "Bearer test.athlete", "GET", "/api/v1/users/me"); w.Code != 200 {
 		t.Fatal("slot not released")
 	}
 }
@@ -157,7 +157,7 @@ func TestInFlightCap(t *testing.T) {
 func TestResponsesAreNotCacheableAndLogClient(t *testing.T) {
 	var logs bytes.Buffer
 	h := NewRouter(training.NewService(&fakeTraining{}), profile.NewService(fakeProfiles{}), &testPinger{}, testAuth{}, slog.New(slog.NewJSONHandler(&logs, nil)), Options{})
-	w := from(h, "198.51.100.7:1", "", "Bearer test|athlete", "GET", "/api/v1/users/me")
+	w := from(h, "198.51.100.7:1", "", "Bearer test.athlete", "GET", "/api/v1/users/me")
 	if w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("personal data may be cached")
 	}

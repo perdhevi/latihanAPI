@@ -868,6 +868,12 @@ paths:
         -
           "$ref": "#/components/parameters/IdempotencyKey"
       responses:
+        "404":
+          description: "userID is neither \"me\" nor the caller's own ID."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
         "409":
           "$ref": "#/components/responses/IdempotencyInProgress"
         "422":
@@ -1537,6 +1543,8 @@ components:
               type: "array"
               nullable: true
               maxItems: 0
+              items:
+                "$ref": "#/components/schemas/Set"
             minutes:
               type: "number"
               minimum: 0
@@ -1614,6 +1622,8 @@ components:
               type: "array"
               nullable: true
               maxItems: 0
+              items:
+                "$ref": "#/components/schemas/Set"
             minutes:
               type: "number"
               minimum: 0
@@ -1691,6 +1701,8 @@ components:
               type: "array"
               nullable: true
               maxItems: 0
+              items:
+                "$ref": "#/components/schemas/Set"
             minutes:
               type: "number"
               minimum: 0
@@ -2275,6 +2287,20 @@ components:
                 - "method_not_allowed"
                 - "not_ready"
                 - "internal_error"
+                - "unauthenticated"
+                - "profile_required"
+                - "profile_exists"
+                - "auth_unavailable"
+                - "rate_limited"
+                - "overloaded"
+                - "precondition_failed"
+                - "precondition_required"
+                - "idempotency_key_in_progress"
+                - "idempotency_key_reused"
+                - "invalid_idempotency_key"
+                - "email_taken"
+                - "invalid_credentials"
+                - "invalid_refresh_token"
             message:
               type: "string"
     Health:

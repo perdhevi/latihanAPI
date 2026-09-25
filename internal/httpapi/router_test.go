@@ -50,7 +50,7 @@ func (s *fakeTraining) GetSession(ctx context.Context, owner, id uuid.UUID) (tra
 	return training.Session{ID: id}, s.err
 }
 
-// testAuth accepts "Bearer test|<subject>" and fails as if its key server were
+// testAuth accepts "Bearer test.<subject>" and fails as if its key server were
 // down for "Bearer outage".
 type testAuth struct{}
 
@@ -59,7 +59,7 @@ func (testAuth) Authenticate(r *http.Request) (auth.Identity, error) {
 	if token == "outage" {
 		return auth.Identity{}, errors.New("private key server failure")
 	}
-	subject, ok := strings.CutPrefix(token, "test|")
+	subject, ok := strings.CutPrefix(token, "test.")
 	if !ok || subject == "" {
 		return auth.Identity{}, auth.ErrUnauthenticated
 	}
@@ -85,7 +85,7 @@ func testRouter(repo *fakeTraining, p *testPinger) http.Handler {
 	return NewRouter(training.NewService(repo), profile.NewService(fakeProfiles{}), p, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{})
 }
 func request(h http.Handler, method, path, body string) *httptest.ResponseRecorder {
-	return requestAs(h, "Bearer test|athlete", method, path, body)
+	return requestAs(h, "Bearer test.athlete", method, path, body)
 }
 func requestAs(h http.Handler, authorization, method, path, body string) *httptest.ResponseRecorder {
 	r := httptest.NewRequestWithContext(context.Background(), method, path, strings.NewReader(body))
@@ -190,13 +190,13 @@ func TestErrorPrivacyAndContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/sessions/"+uuid.NewString(), nil)
-	r.Header.Set("Authorization", "Bearer test|athlete")
+	r.Header.Set("Authorization", "Bearer test.athlete")
 	h.ServeHTTP(httptest.NewRecorder(), r)
 	if !errors.Is(repo.ctx.Err(), context.Canceled) {
 		t.Fatal("cancellation lost")
 	}
 	r = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/users", strings.NewReader(`{}`))
-	r.Header.Set("Authorization", "Bearer test|athlete")
+	r.Header.Set("Authorization", "Bearer test.athlete")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if w.Code != 415 {
@@ -215,7 +215,7 @@ func TestAuthentication(t *testing.T) {
 		{"invalid token", "Bearer forged", "GET", session, 401, "unauthenticated", `Bearer realm="latihan", error="invalid_token"`},
 		{"wrong scheme", "Basic dXNlcjpwYXNz", "GET", session, 401, "unauthenticated", `Bearer realm="latihan", error="invalid_token"`},
 		{"provider outage", "Bearer outage", "GET", session, 503, "auth_unavailable", ""},
-		{"no profile yet", "Bearer test|newcomer", "GET", session, 403, "profile_required", ""},
+		{"no profile yet", "Bearer test.newcomer", "GET", session, 403, "profile_required", ""},
 		{"profile creation needs credentials", "", "POST", "/api/v1/users", 401, "unauthenticated", `Bearer realm="latihan"`},
 		{"unknown routes stay 404", "", "GET", "/api/v1/nope", 404, "not_found", ""},
 	} {

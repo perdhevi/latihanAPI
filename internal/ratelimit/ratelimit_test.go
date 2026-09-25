@@ -18,7 +18,7 @@ func TestParsePolicy(t *testing.T) {
 			t.Errorf("%s: got %+v %v", in, got, err)
 		}
 	}
-	for _, bad := range []string{"", "50", "50/s", "50/d:1", "0/s:1", "-1/s:1", "x/s:1", "5/s:0", "5/s:x", "Inf/s:1"} {
+	for _, bad := range []string{"", "50", "50/s", "50/d:1", "0/s:1", "-1/s:1", "x/s:1", "5/s:0", "5/s:x", "Inf/s:1", "NaN/s:1"} {
 		if _, err := ParsePolicy(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}

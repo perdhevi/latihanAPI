@@ -60,6 +60,11 @@ func TestBearerToken(t *testing.T) {
 		"Basic abc":          "",
 		"Bearer a b":         "",
 		"Bearer  abc":        "",
+		"Bearer \r":          "",
+		"Bearer a\x00b":      "",
+		"Bearer ===":         "",
+		"Bearer abc==":       "abc==",
+		"Bearer a=b":         "",
 	} {
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
 		if header != "" {

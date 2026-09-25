@@ -46,7 +46,7 @@ func callAs(t *testing.T, h http.Handler, subject, method, path string, body any
 		}
 		raw = string(encoded)
 	}
-	w := requestAs(h, "Bearer test|"+subject, method, path, raw)
+	w := requestAs(h, "Bearer test."+subject, method, path, raw)
 	if w.Code != status {
 		t.Fatalf("%s %s: got %d want %d: %s", method, path, w.Code, status, w.Body)
 	}
@@ -66,7 +66,7 @@ func callAs(t *testing.T, h http.Handler, subject, method, path string, body any
 func TestTrainingAPIIntegration(t *testing.T) {
 	pool := testdb.Open(t)
 	repo := training.NewPostgresRepository(pool)
-	h := NewRouter(training.NewService(repo), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{})
+	h := contract(t, NewRouter(training.NewService(repo), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{}))
 	var user, other profile.User
 	call(t, h, "POST", "/api/v1/users", profile.UserInput{DisplayName: " Athlete "}, 201, &user)
 	callAs(t, h, "other", "POST", "/api/v1/users", profile.UserInput{DisplayName: "Other"}, 201, &other)
@@ -289,7 +289,7 @@ func TestMigrationRoundTrip(t *testing.T) {
 
 func TestIdentityLinkingIntegration(t *testing.T) {
 	pool := testdb.Open(t)
-	h := NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{})
+	h := contract(t, NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{}))
 	callAs(t, h, "newcomer", "GET", "/api/v1/sessions", nil, 403, nil)
 	var user profile.User
 	callAs(t, h, "newcomer", "POST", "/api/v1/users", profile.UserInput{DisplayName: "New"}, 201, &user)
@@ -305,7 +305,7 @@ func TestIdentityLinkingIntegration(t *testing.T) {
 // read nor change them, and learns nothing beyond "not found".
 func TestCrossUserAccessIntegration(t *testing.T) {
 	pool := testdb.Open(t)
-	h := NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{})
+	h := contract(t, NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{}))
 	var victim, intruder profile.User
 	callAs(t, h, "victim", "POST", "/api/v1/users", profile.UserInput{DisplayName: "Victim"}, 201, &victim)
 	callAs(t, h, "intruder", "POST", "/api/v1/users", profile.UserInput{DisplayName: "Intruder"}, 201, &intruder)
@@ -385,7 +385,7 @@ func TestCrossUserAccessIntegration(t *testing.T) {
 // same timestamp straddle a page boundary or new items arrive mid-way.
 func TestCursorPaginationIntegration(t *testing.T) {
 	pool := testdb.Open(t)
-	h := NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{})
+	h := contract(t, NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{}))
 	call(t, h, "POST", "/api/v1/users", profile.UserInput{DisplayName: "Pager"}, 201, nil)
 	base := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
 	want := map[uuid.UUID]bool{}

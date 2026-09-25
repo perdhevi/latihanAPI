@@ -135,11 +135,29 @@ func New(ctx context.Context, name string, deps Deps) (Authenticator, error) {
 }
 
 // BearerToken extracts the token from an "Authorization: Bearer <token>" header
-// (RFC 6750). It reports false when the header is missing or malformed.
+// (RFC 6750). It reports false when the header is missing or malformed,
+// including tokens with characters outside the b64token grammar.
 func BearerToken(r *http.Request) (string, bool) {
 	scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
-	if !ok || !strings.EqualFold(scheme, "Bearer") || token == "" || strings.ContainsAny(token, " \t") {
+	if !ok || !strings.EqualFold(scheme, "Bearer") || !isB64Token(token) {
 		return "", false
 	}
 	return token, true
+}
+
+// isB64Token reports whether s matches RFC 6750's b64token:
+// 1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" ) *"=".
+func isB64Token(s string) bool {
+	body := strings.TrimRight(s, "=")
+	if body == "" {
+		return false
+	}
+	for _, c := range body {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', strings.ContainsRune("-._~+/", c):
+		default:
+			return false
+		}
+	}
+	return true
 }

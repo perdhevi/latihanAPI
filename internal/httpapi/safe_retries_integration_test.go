@@ -22,9 +22,9 @@ import (
 	"github.com/perdhevi/latihanAPI/internal/training"
 )
 
-func safeRouter(pool *pgxpool.Pool, opts Options) http.Handler {
+func safeRouter(t *testing.T, pool *pgxpool.Pool, opts Options) http.Handler {
 	opts.Idempotency = idempotency.NewStore(pool)
-	return NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), opts)
+	return contract(t, NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), opts))
 }
 
 // send makes one request as subject with optional extra headers.
@@ -36,7 +36,7 @@ func send(h http.Handler, subject, method, path string, body any, headers map[st
 	}
 	r := httptest.NewRequestWithContext(context.Background(), method, path, strings.NewReader(raw))
 	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Authorization", "Bearer test|"+subject)
+	r.Header.Set("Authorization", "Bearer test."+subject)
 	for k, v := range headers {
 		r.Header.Set(k, v)
 	}
@@ -62,7 +62,7 @@ func countSessions(t *testing.T, h http.Handler, subject string) int {
 
 func TestIdempotencyKeysIntegration(t *testing.T) {
 	pool := testdb.Open(t)
-	h := safeRouter(pool, Options{})
+	h := safeRouter(t, pool, Options{})
 	for _, who := range []string{"athlete", "other"} {
 		send(h, who, "POST", "/api/v1/users", profile.UserInput{DisplayName: who}, nil)
 	}
@@ -133,7 +133,7 @@ func TestIdempotencyKeysIntegration(t *testing.T) {
 // Parallel retries with one key create exactly one record.
 func TestConcurrentIdempotentRequestsIntegration(t *testing.T) {
 	pool := testdb.Open(t)
-	h := safeRouter(pool, Options{})
+	h := safeRouter(t, pool, Options{})
 	send(h, "athlete", "POST", "/api/v1/users", profile.UserInput{DisplayName: "A"}, nil)
 	key := map[string]string{"Idempotency-Key": "parallel"}
 	var wg sync.WaitGroup
@@ -197,7 +197,7 @@ func TestIdempotencyStore(t *testing.T) {
 
 func TestIfMatchIntegration(t *testing.T) {
 	pool := testdb.Open(t)
-	h := safeRouter(pool, Options{})
+	h := safeRouter(t, pool, Options{})
 	send(h, "athlete", "POST", "/api/v1/users", profile.UserInput{DisplayName: "A"}, nil)
 	created := send(h, "athlete", "POST", "/api/v1/plans", training.PlanInput{Name: "Original", Exercises: plannedExercises()}, nil)
 	planURL := created.Header().Get("Location")
@@ -276,7 +276,7 @@ func TestIfMatchIntegration(t *testing.T) {
 // Two writers holding the same ETag: exactly one wins.
 func TestConcurrentConditionalWritesIntegration(t *testing.T) {
 	pool := testdb.Open(t)
-	h := safeRouter(pool, Options{})
+	h := safeRouter(t, pool, Options{})
 	send(h, "athlete", "POST", "/api/v1/users", profile.UserInput{DisplayName: "A"}, nil)
 	created := send(h, "athlete", "POST", "/api/v1/plans", training.PlanInput{Name: "P", Exercises: plannedExercises()}, nil)
 	for round := range 10 {
@@ -303,7 +303,7 @@ func TestConcurrentConditionalWritesIntegration(t *testing.T) {
 
 func TestRequireIfMatchIntegration(t *testing.T) {
 	pool := testdb.Open(t)
-	h := safeRouter(pool, Options{RequireIfMatch: true})
+	h := safeRouter(t, pool, Options{RequireIfMatch: true})
 	send(h, "athlete", "POST", "/api/v1/users", profile.UserInput{DisplayName: "A"}, nil)
 	if w := send(h, "athlete", "PUT", "/api/v1/users/me", profile.UserInput{DisplayName: "B"}, nil); w.Code != http.StatusPreconditionRequired {
 		t.Fatalf("missing If-Match: %d", w.Code)

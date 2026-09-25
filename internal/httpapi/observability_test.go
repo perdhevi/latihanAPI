@@ -37,7 +37,7 @@ func TestMetricsUseRoutePatterns(t *testing.T) {
 		request(h, "GET", "/api/v1/sessions/"+uuid.NewString(), "")
 	}
 	requestAs(h, "", "GET", "/api/v1/plans", "")                     // 401
-	requestAs(h, "Bearer test|newcomer", "GET", "/api/v1/plans", "") // 403
+	requestAs(h, "Bearer test.newcomer", "GET", "/api/v1/plans", "") // 403
 	request(h, "BREW", "/api/v1/sessions/"+uuid.NewString(), "")     // unknown method
 	request(h, "GET", "/no/such/"+uuid.NewString(), "")
 
@@ -111,7 +111,7 @@ func TestTracingAndLogCorrelation(t *testing.T) {
 	var logs bytes.Buffer
 	h, _ := observedRouter(&fakeTraining{}, &logs, Options{})
 	r := httptest.NewRequestWithContext(context.Background(), "GET", "/api/v1/sessions/"+uuid.NewString(), nil)
-	r.Header.Set("Authorization", "Bearer test|athlete")
+	r.Header.Set("Authorization", "Bearer test.athlete")
 	// The caller's trace: our span must join it.
 	r.Header.Set("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
 	h.ServeHTTP(httptest.NewRecorder(), r)
