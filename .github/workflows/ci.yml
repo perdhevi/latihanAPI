@@ -50,14 +50,14 @@ jobs:
           go-version-file: go.mod
           cache: true
       # Reports only vulnerabilities reachable from our code, so a failure here is actionable.
-      - run: go run golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }} ./...
+      - run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
 
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
         env:
           POSTGRES_DB: latihan_test
           POSTGRES_USER: latihan
@@ -95,6 +95,12 @@ jobs:
       - run: cp .env.example .env
       - run: docker compose up --build --detach --wait
       - run: sh scripts/smoke-test.sh
+      - name: Scan the image for fixable HIGH and CRITICAL vulnerabilities
+        run: |
+          docker save latihan-api:local -o image.tar
+          docker run --rm -v "$PWD/image.tar:/image.tar:ro" \
+            aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 \
+            image --input /image.tar --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL
       - name: Production overlay is valid
         run: docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
         env:

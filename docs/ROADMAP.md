@@ -32,7 +32,7 @@ VM: Caddy (TLS :443) → latihan-api → PostgreSQL   (only Caddy publishes port
 | phase-06 | Safe retries | `Idempotency-Key` on creating POSTs (replay, 409 in progress, 422 reuse, 24h TTL); `ETag` + optional `If-Match` on PUT/DELETE with the check inside the SQL write; `REQUIRE_IF_MATCH` | Done |
 | phase-07 | Observability | Prometheus metrics with bounded labels on an admin port (pprof opt-in); optional OpenTelemetry traces with request and PostgreSQL spans; trace IDs and user IDs in logs; panic stacks; Compose observability profile (Prometheus, Jaeger) | Done |
 | phase-08 | Secrets, TLS, least privilege | `X_FILE` secrets and Compose secrets; migrator/app/superuser role split (app has DML only, proven by a CI smoke test); Caddy TLS overlay with security headers and a single trusted proxy; warning for unverified remote database TLS | Done |
-| phase-09 | Shipping | Distroless image by digest, SBOM, cosign, hardened Compose, VM baseline, deploy workflow | Planned |
+| phase-09 | Shipping | Distroless image pinned by digest (all images pinned); Trivy gate in CI and releases; release workflow with SBOM, SLSA provenance and keyless cosign signing; approval-gated SSH deploy that verifies signatures; production limits and log rotation; VM baseline guide | Done |
 | phase-10 | Proving it | Fuzzing, OpenAPI contract tests, load tests, cross-user access tests | Planned |
 | phase-11 | Health data responsibly | Export, erasure, audit log, backups and restore drills | Planned |
 

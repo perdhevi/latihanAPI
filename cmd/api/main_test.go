@@ -53,3 +53,27 @@ func TestAdminServer(t *testing.T) {
 		}
 	}
 }
+
+func TestHealthcheck(t *testing.T) {
+	ready := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ready" {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ready.Close()
+	_, port, _ := strings.Cut(strings.TrimPrefix(ready.URL, "http://"), ":")
+	if err := healthcheck(":" + port); err != nil {
+		t.Fatalf("ready server: %v", err)
+	}
+	notReady := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer notReady.Close()
+	_, port, _ = strings.Cut(strings.TrimPrefix(notReady.URL, "http://"), ":")
+	if err := healthcheck(":" + port); err == nil {
+		t.Fatal("503 reported healthy")
+	}
+	if err := healthcheck("127.0.0.1:1"); err == nil {
+		t.Fatal("closed port reported healthy")
+	}
+}

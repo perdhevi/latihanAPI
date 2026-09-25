@@ -17,7 +17,7 @@ secrets:
 
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
     environment:
       POSTGRES_DB: latihan
       POSTGRES_USER: latihan
@@ -41,7 +41,7 @@ services:
 
   # Applies migrations as latihan_migrator, the schema owner.
   migrate:
-    image: migrate/migrate:v4.18.3
+    image: migrate/migrate:v4.18.3@sha256:39b59b389634e43bb3f2d4e94bc1edef0775ec2a9a3540ce6a2cf330e5daae55
     volumes:
       - ./migrations:/migrations:ro
     secrets: [migrator_password]
@@ -86,7 +86,8 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/ready"]
+      # The image has no shell or wget; the binary checks itself.
+      test: ["CMD", "/usr/local/bin/api", "healthcheck"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -105,7 +106,7 @@ services:
   # Prometheus UI on http://localhost:9091, Jaeger UI on http://localhost:16686.
   # Set OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 in .env to send traces.
   prometheus:
-    image: prom/prometheus:v3.15.0
+    image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
     profiles: [observability]
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -113,7 +114,7 @@ services:
       - "127.0.0.1:9091:9090"
 
   jaeger:
-    image: jaegertracing/jaeger:2.21.0
+    image: jaegertracing/jaeger:2.21.0@sha256:3d0ac795ff98aa04d1be04311d2dac6c25b4bfc8322dc02e53bc5b170c5018c3
     profiles: [observability]
     ports:
       - "127.0.0.1:16686:16686"

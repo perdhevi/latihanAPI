@@ -424,14 +424,30 @@ to the current version, unless `REQUIRE_IF_MATCH=true`, which answers 428.
 
 ## Production deployment
 
-On a VM with Docker, a domain pointing at it, and ports 80 and 443 open:
+[docs/DEPLOY.md](docs/DEPLOY.md) walks through the whole path: VM baseline (SSH keys
+only, firewall, automatic updates, Docker defaults), secrets, GitHub environment
+setup, releasing with `git tag v1.2.3`, and rollback. In short:
 
 ```sh
 scripts/init-secrets.sh          # random credentials in ./secrets (never overwrites)
 cp .env.example .env              # then set SECRETS_DIR=./secrets, DOMAIN, ACME_EMAIL,
                                   # and AUTH_JWT_ISSUER=https://DOMAIN (or another provider)
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+deploy/deploy.sh <commit> ghcr.io/perdhevi/latihanapi@sha256:<digest>
 ```
+
+**Releases.** Pushing a `v*` tag runs [the Release workflow](.github/workflows/release.yml):
+it builds the image, pushes it to GHCR with an SPDX SBOM and SLSA provenance
+attached, fails on fixable HIGH or CRITICAL vulnerabilities (Trivy), and signs it
+with cosign using GitHub's workflow identity (no signing keys to store). With
+deployment enabled, it then waits for approval and runs `deploy/deploy.sh` over SSH.
+That script deploys only images pinned by digest **and** signed by this
+repository's release workflow for a `v*` tag, checked out at the matching commit.
+
+**The image** is `distroless/static`, pinned by digest like every other image: no
+shell, no package manager, running as UID 65532, about 35 MB. The binary checks
+its own health (`api healthcheck`) since there is no `wget`. In production the
+containers also get memory and PID limits and rotated logs. CI scans every build
+with Trivy, not only releases.
 
 [docker-compose.prod.yml](docker-compose.prod.yml) adds [Caddy](deploy/Caddyfile) in front:
 

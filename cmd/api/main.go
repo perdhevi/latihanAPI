@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/pprof"
 	"os"
@@ -26,13 +27,22 @@ import (
 	"github.com/perdhevi/latihanAPI/internal/training"
 )
 
+// commands are one-off tasks run with the same binary, since the runtime image
+// has no shell: api keygen, api healthcheck.
+var commands = map[string]func(args []string) error{
+	"keygen":      keygen,
+	"healthcheck": func([]string) error { return healthcheck(os.Getenv("HTTP_ADDR")) },
+}
+
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "keygen" {
-		if err := keygen(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "keygen:", err)
-			os.Exit(1)
+	if len(os.Args) > 1 {
+		if command, ok := commands[os.Args[1]]; ok {
+			if err := command(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, os.Args[1]+":", err)
+				os.Exit(1)
+			}
+			return
 		}
-		return
 	}
 	if err := run(); err != nil {
 		slog.Error("application stopped", "error", err)
@@ -197,4 +207,32 @@ func newAdminServer(addr string, metrics *telemetry.Metrics, withPprof bool) *ht
 		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
+}
+
+// healthcheck asks this container's own server whether it is ready. The
+// runtime image has no shell or wget, so the container healthcheck runs the
+// binary itself: api healthcheck.
+func healthcheck(addr string) error {
+	if addr == "" {
+		addr = ":8080"
+	}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+net.JoinHostPort("127.0.0.1", port)+"/ready", nil) //nolint:gosec // G704: always loopback; only the port comes from HTTP_ADDR
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: see above
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("not ready: %s", resp.Status)
+	}
+	return nil
 }

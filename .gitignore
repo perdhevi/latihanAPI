@@ -12,3 +12,7 @@ coverage.out
 # Real deployment secrets (scripts/init-secrets.sh). secrets/dev is committed.
 /secrets/*
 !/secrets/dev/
+
+# Written by deploy/deploy.sh on the server.
+/deploy/.current
+/deploy/.previous
