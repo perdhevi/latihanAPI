@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -35,13 +34,37 @@ type Config struct {
 	// RequireIfMatch makes clients prove which version they are changing.
 	RequireIfMatch bool
 
+	// Env reads further settings (for auth providers), with X_FILE support.
+	Env *Env
+
 	// AdminAddr serves /metrics (and optionally pprof). Never publish it.
 	AdminAddr  string
 	AdminPprof bool
 }
 
-func Load() (Config, error) {
-	c := Config{HTTPAddr: os.Getenv("HTTP_ADDR"), DatabaseURL: os.Getenv("DATABASE_URL"), AuthProvider: os.Getenv("AUTH_PROVIDER")}
+// Load reads the configuration from the environment; see Env for X_FILE secrets.
+func Load() (Config, error) { return LoadFrom(NewEnv()) }
+
+func LoadFrom(env *Env) (Config, error) {
+	c, err := load(env)
+	if err == nil {
+		err = env.Err()
+	}
+	if err != nil {
+		return Config{}, err
+	}
+	c.Env = env
+	return c, nil
+}
+
+func load(env *Env) (Config, error) {
+	getenv := func(name, fallback string) string {
+		if v := env.Get(name); v != "" {
+			return v
+		}
+		return fallback
+	}
+	c := Config{HTTPAddr: env.Get("HTTP_ADDR"), DatabaseURL: env.Get("DATABASE_URL"), AuthProvider: env.Get("AUTH_PROVIDER")}
 	if c.HTTPAddr == "" {
 		c.HTTPAddr = ":8080"
 	}
@@ -54,7 +77,7 @@ func Load() (Config, error) {
 	if c.AuthProvider == "" {
 		return Config{}, errors.New("AUTH_PROVIDER is required (for example jwt, firebase, cognito or oidc)")
 	}
-	if level := os.Getenv("LOG_LEVEL"); level != "" {
+	if level := env.Get("LOG_LEVEL"); level != "" {
 		if err := c.LogLevel.UnmarshalText([]byte(level)); err != nil {
 			return Config{}, errors.New("invalid LOG_LEVEL")
 		}
@@ -72,10 +95,10 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("%s: %w", p.name, err)
 		}
 	}
-	if c.MaxInFlight, err = intSetting("MAX_IN_FLIGHT", 256, 1, 100_000); err != nil {
+	if c.MaxInFlight, err = intSetting(env, "MAX_IN_FLIGHT", 256, 1, 100_000); err != nil {
 		return Config{}, err
 	}
-	maxConns, err := intSetting("DB_MAX_CONNS", 10, 1, 1000)
+	maxConns, err := intSetting(env, "DB_MAX_CONNS", 10, 1, 1000)
 	if err != nil {
 		return Config{}, err
 	}
@@ -87,17 +110,17 @@ func Load() (Config, error) {
 	if _, _, err := net.SplitHostPort(c.AdminAddr); err != nil || c.AdminAddr == c.HTTPAddr {
 		return Config{}, errors.New("ADMIN_ADDR must be host:port and differ from HTTP_ADDR")
 	}
-	if raw := os.Getenv("ADMIN_PPROF"); raw != "" {
+	if raw := env.Get("ADMIN_PPROF"); raw != "" {
 		if c.AdminPprof, err = strconv.ParseBool(raw); err != nil {
 			return Config{}, errors.New("ADMIN_PPROF must be true or false")
 		}
 	}
-	if raw := os.Getenv("REQUIRE_IF_MATCH"); raw != "" {
+	if raw := env.Get("REQUIRE_IF_MATCH"); raw != "" {
 		if c.RequireIfMatch, err = strconv.ParseBool(raw); err != nil {
 			return Config{}, errors.New("REQUIRE_IF_MATCH must be true or false")
 		}
 	}
-	for _, raw := range strings.Split(os.Getenv("TRUSTED_PROXIES"), ",") {
+	for _, raw := range strings.Split(env.Get("TRUSTED_PROXIES"), ",") {
 		if raw = strings.TrimSpace(raw); raw == "" {
 			continue
 		}
@@ -114,15 +137,8 @@ func Load() (Config, error) {
 	return c, nil
 }
 
-func getenv(name, fallback string) string {
-	if v := os.Getenv(name); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func intSetting(name string, fallback, lowest, highest int) (int, error) {
-	raw := os.Getenv(name)
+func intSetting(env *Env, name string, fallback, lowest, highest int) (int, error) {
+	raw := env.Get(name)
 	if raw == "" {
 		return fallback, nil
 	}

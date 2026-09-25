@@ -82,5 +82,25 @@ jobs:
         working-directory: auth
       - run: go test -race -count=1 -tags=integration ./...
       - run: go build ./...
-      - run: docker compose config --quiet
-      - run: docker build -t latihan-api:ci .
+
+  # Starts the real Compose stack and checks the quickstart end to end,
+  # including that the API's database role cannot change the schema.
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: cp .env.example .env
+      - run: docker compose up --build --detach --wait
+      - run: sh scripts/smoke-test.sh
+      - name: Production overlay is valid
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+        env:
+          DOMAIN: api.example.com
+          ACME_EMAIL: ci@example.com
+      - if: failure()
+        run: docker compose logs
+      - if: always()
+        run: docker compose down --volumes

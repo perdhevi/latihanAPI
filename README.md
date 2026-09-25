@@ -64,7 +64,8 @@ on first start (and keeps it afterwards), and starts the non-root API. The API
 refuses to start without a valid `AUTH_PROVIDER`; the provider's settings and
 keys are checked before the server accepts any request.
 The API also retries database connectivity for up to 30 seconds at startup.
-The `latihan` database/user/password values are **local development credentials**.
+Credentials come from `secrets/dev/`, **committed development-only values**; a real
+deployment generates its own (see [Production deployment](#production-deployment)).
 
 ```sh
 curl http://localhost:8080/health
@@ -421,6 +422,56 @@ row lock), so of two writers holding the same ETag exactly one succeeds. `*`
 matches any version; weak ETags never match. Without `If-Match` the write applies
 to the current version, unless `REQUIRE_IF_MATCH=true`, which answers 428.
 
+## Production deployment
+
+On a VM with Docker, a domain pointing at it, and ports 80 and 443 open:
+
+```sh
+scripts/init-secrets.sh          # random credentials in ./secrets (never overwrites)
+cp .env.example .env              # then set SECRETS_DIR=./secrets, DOMAIN, ACME_EMAIL,
+                                  # and AUTH_JWT_ISSUER=https://DOMAIN (or another provider)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+[docker-compose.prod.yml](docker-compose.prod.yml) adds [Caddy](deploy/Caddyfile) in front:
+
+- **TLS.** Caddy obtains and renews a Let's Encrypt certificate for `DOMAIN`,
+  redirects HTTP to HTTPS, and adds HSTS, a deny-all Content-Security-Policy,
+  `X-Frame-Options: DENY` and `Referrer-Policy: no-referrer`.
+- **Nothing else is reachable.** Only Caddy publishes ports; the API, its admin
+  port and PostgreSQL are only on the Compose network.
+- **Real client addresses.** Caddy has a fixed address (`172.30.0.10`), the only
+  entry in `TRUSTED_PROXIES`, and replaces any `X-Forwarded-For` a client sends.
+
+**Secrets** are files, mounted as Compose secrets and read through `X_FILE` settings,
+so they never appear in `docker inspect`, process listings or `.env`.
+`scripts/init-secrets.sh` keeps its directory private (0700) and makes the files
+readable (0644) because the containers run as different users. Passwords apply when
+the database volume is first created; change them later with `ALTER ROLE ... PASSWORD`
+and update the files.
+
+**Database roles.** [db/init/10-roles.sh](db/init/10-roles.sh) runs when the volume is
+first created:
+
+| Role | Used by | Can |
+| --- | --- | --- |
+| `latihan` | Nothing after initialisation | Everything (superuser) |
+| `latihan_migrator` | The migration job | Own and change the schema |
+| `latihan_app` | The API | `SELECT`, `INSERT`, `UPDATE`, `DELETE` on rows; no DDL, no `TRUNCATE` |
+
+An SQL injection in the API could therefore still read and change rows, but not
+drop tables or alter the schema. CI proves it: the smoke test runs the stack and
+checks that `latihan_app` cannot `DROP`, `TRUNCATE`, `ALTER` or `CREATE`.
+
+**Upgrading an existing development database.** Volumes created before these roles
+existed have neither role. For development data, recreate the volume with
+`docker compose down -v`.
+
+**Managed PostgreSQL.** Point `DATABASE_URL` (via a secret file) at it with
+`sslmode=verify-full`, create the two roles with the SQL in `db/init/10-roles.sh`,
+and run migrations as the migrator. The API warns at startup when a remote
+database connection is not certificate-verified.
+
 ## Observability
 
 The API serves `/metrics` on a separate admin listener, `ADMIN_ADDR` (default
@@ -515,7 +566,8 @@ the log level and `AUTH_*` settings come from `.env`.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `HTTP_ADDR` | `:8080` | Listener |
-| `DATABASE_URL` | Required | PostgreSQL connection URL |
+| `DATABASE_URL` | Required | PostgreSQL connection URL, as `latihan_app` |
+| `X_FILE` | | Any setting `X` may instead name a file holding its value (Docker secrets); setting both is an error |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `AUTH_PROVIDER` | Required | `jwt`, `firebase`, `cognito`, `oidc`, or a comma-separated list; see [Authentication](#authentication) and `.env.example` |
 | `AUTH_*` | Provider-specific | Settings for the selected provider |
@@ -534,8 +586,8 @@ go run -tags postgres github.com/golang-migrate/migrate/v4/cmd/migrate@v4.18.3 -
 go run ./cmd/api
 ```
 
-Use TLS-enabled database URLs and managed secrets in deployed environments;
-`sslmode=disable` is only for local development. Use `curl.exe` on Windows if `curl`
+`sslmode=disable` is fine on the same host or Compose network; for any other
+database use `sslmode=verify-full` (the API logs a warning otherwise). Use `curl.exe` on Windows if `curl`
 is a PowerShell alias, or use `Invoke-RestMethod`.
 
 ## Packages and persistence

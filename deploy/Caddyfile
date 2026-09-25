@@ -1,0 +1,32 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	# Refuse oversized bodies before they reach the API (which allows 1 MiB).
+	request_body {
+		max_size 2MB
+	}
+
+	header {
+		# Browsers must use HTTPS for this host from now on.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		# A JSON API has nothing to render, frame or load.
+		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	# Caddy replaces any X-Forwarded-For a client sends with the client's real
+	# address; the API trusts that header only from this proxy.
+	reverse_proxy latihan-api:8080 {
+		health_uri /ready
+		health_interval 10s
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

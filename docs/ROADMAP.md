@@ -31,7 +31,7 @@ VM: Caddy (TLS :443) → latihan-api → PostgreSQL   (only Caddy publishes port
 | phase-05 | Abuse resistance | Per-IP (IPv6 /64), per-user and auth-route rate limits (429 + `Retry-After`), trusted-proxy client IPs, in-flight cap, cursor pagination, PostgreSQL statement/lock/idle timeouts, 16 KiB header cap, `Cache-Control: no-store` | Done |
 | phase-06 | Safe retries | `Idempotency-Key` on creating POSTs (replay, 409 in progress, 422 reuse, 24h TTL); `ETag` + optional `If-Match` on PUT/DELETE with the check inside the SQL write; `REQUIRE_IF_MATCH` | Done |
 | phase-07 | Observability | Prometheus metrics with bounded labels on an admin port (pprof opt-in); optional OpenTelemetry traces with request and PostgreSQL spans; trace IDs and user IDs in logs; panic stacks; Compose observability profile (Prometheus, Jaeger) | Done |
-| phase-08 | Secrets, TLS, least privilege | `*_FILE` secrets, Caddy TLS, `sslmode=verify-full`, migrator/app DB roles, optional Postgres row-level security as a second ownership layer | Planned |
+| phase-08 | Secrets, TLS, least privilege | `X_FILE` secrets and Compose secrets; migrator/app/superuser role split (app has DML only, proven by a CI smoke test); Caddy TLS overlay with security headers and a single trusted proxy; warning for unverified remote database TLS | Done |
 | phase-09 | Shipping | Distroless image by digest, SBOM, cosign, hardened Compose, VM baseline, deploy workflow | Planned |
 | phase-10 | Proving it | Fuzzing, OpenAPI contract tests, load tests, cross-user access tests | Planned |
 | phase-11 | Health data responsibly | Export, erasure, audit log, backups and restore drills | Planned |
@@ -98,6 +98,14 @@ Add a provider by running `go get` on its module, adding its import to
 `plugins.go` and rebuilding the image. Providers that serve their own endpoints
 (login, key publication) implement `RouteRegistrar`; those routes are mounted
 without authentication.
+
+### Deferred: row-level security
+
+PostgreSQL row-level security would add a second ownership check below the SQL.
+It needs every query to run in a transaction that first sets the current user
+(`SET LOCAL app.user_id`), which means reworking every repository and a cost on
+every request. Ownership is already enforced in every query and covered by the
+cross-user test suite, so RLS is documented as an option rather than built.
 
 ### Built-in `jwt` provider (phase-04)
 

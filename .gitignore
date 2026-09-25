@@ -8,3 +8,7 @@ coverage.out
 .tools/
 .cache/
 .keys/
+
+# Real deployment secrets (scripts/init-secrets.sh). secrets/dev is committed.
+/secrets/*
+!/secrets/dev/

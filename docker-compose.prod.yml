@@ -1,0 +1,58 @@
+# Production overlay: HTTPS at the edge, nothing else reachable.
+#
+#   scripts/init-secrets.sh                  # once: random credentials in ./secrets
+#   # .env: SECRETS_DIR=./secrets, DOMAIN=api.example.com, ACME_EMAIL=you@example.com,
+#   #       AUTH_JWT_ISSUER=https://api.example.com (with AUTH_PROVIDER=jwt)
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Caddy obtains and renews certificates for DOMAIN automatically (the domain's
+# DNS must point at this machine, with ports 80 and 443 open). Only Caddy
+# publishes ports; the API and PostgreSQL are reachable only on the Compose
+# network.
+
+services:
+  caddy:
+    image: caddy:2.11.4-alpine
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      default:
+        # Fixed, so the API can trust exactly this address for X-Forwarded-For.
+        ipv4_address: 172.30.0.10
+    depends_on:
+      latihan-api:
+        condition: service_healthy
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+
+  latihan-api:
+    ports: !reset []
+    environment:
+      TRUSTED_PROXIES: 172.30.0.10
+    restart: unless-stopped
+
+  postgres:
+    ports: !reset []
+    restart: unless-stopped
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  caddy-data:
+  caddy-config:

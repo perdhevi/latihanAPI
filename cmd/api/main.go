@@ -68,12 +68,20 @@ func run() error {
 	}
 	defer pool.Close()
 	metrics.RegisterPool(pool)
+	if warning := database.TransportWarning(cfg.DatabaseURL); warning != "" {
+		logger.Warn(warning)
+	}
 	// Providers get the database through database/sql so the auth contract
 	// stays free of driver dependencies.
 	db := stdlib.OpenDBFromPool(pool)
 	defer func() { _ = db.Close() }()
-	authenticator, err := auth.New(ctx, cfg.AuthProvider, auth.Deps{Getenv: os.Getenv, Logger: logger, HTTPClient: &http.Client{Timeout: 10 * time.Second}, DB: db})
+	authenticator, err := auth.New(ctx, cfg.AuthProvider, auth.Deps{Getenv: cfg.Env.Get, Logger: logger, HTTPClient: &http.Client{Timeout: 10 * time.Second}, DB: db})
 	if err != nil {
+		// An unreadable *_FILE secret explains an empty setting better than the provider can.
+		return errors.Join(cfg.Env.Err(), err)
+	}
+	// Providers read settings through Env; report unreadable *_FILE secrets.
+	if err := cfg.Env.Err(); err != nil {
 		return err
 	}
 	logger.Info("authentication provider ready", "provider", cfg.AuthProvider)
