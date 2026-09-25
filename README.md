@@ -296,9 +296,7 @@ a separate migration and sync contract.
 ## Testing
 
 ```sh
-gofmt -w cmd internal
-go vet ./...
-go test ./...
+make check   # golangci-lint (incl. gofmt/goimports), govulncheck, unit tests
 go build ./...
 docker compose up -d postgres
 TEST_DATABASE_URL='postgres://latihan:latihan@localhost:5432/latihan?sslmode=disable' \
@@ -314,11 +312,17 @@ user needs schema creation permission. Never use a production database for tests
 The integration tag fails if its database URL is missing. Tests cover CRUD,
 ownership constraints, stable plan snapshots, plan changes/detachment, comparison
 metrics, missing/unplanned exercises, history ordering, pagination, cancellation,
-deletion conflicts, and migration rollback/reapplication. CI runs vet, race-enabled
-unit/integration tests, formatting, build, Compose validation, and Docker build.
+deletion conflicts, and migration rollback/reapplication.
 
-Make targets: `run`, `build`, `test`, `fmt`, `vet`, `test-integration`, `seed`,
-`migrate-up`, `migrate-down`, `docker-up`, `docker-down`.
+CI runs three jobs: **lint** (tidy modules, golangci-lint with gosec and other
+security linters, formatting), **vulnerabilities** (govulncheck; fails only on
+vulnerabilities reachable from this code), and **test** (race-enabled unit and
+integration tests, build, Compose validation, Docker build). Actions are pinned to
+commit SHAs and Dependabot updates Go modules, actions and base images weekly.
+Linter configuration lives in `.golangci.yml`.
+
+Make targets: `run`, `build`, `test`, `fmt`, `vet`, `lint`, `vuln`, `check`,
+`test-integration`, `seed`, `migrate-up`, `migrate-down`, `docker-up`, `docker-down`.
 `make seed` requires `psql`. `make migrate-down` rolls back one migration and
 **deletes that migration's data**: currently sessions, plans, measurements, and
 profiles. The previous exercise catalog remains until its own migration is rolled

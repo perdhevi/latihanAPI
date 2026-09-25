@@ -3,8 +3,10 @@ export
 
 GO ?= go
 MIGRATE ?= go run -tags postgres github.com/golang-migrate/migrate/v4/cmd/migrate@v4.18.3
+GOLANGCI_LINT ?= $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.8.0
 
-.PHONY: run build test fmt vet migrate-up migrate-down docker-up docker-down test-integration seed
+.PHONY: run build test fmt vet lint vuln check migrate-up migrate-down docker-up docker-down test-integration seed
 run:
 	$(GO) run ./cmd/api
 build:
@@ -12,7 +14,13 @@ build:
 test:
 	$(GO) test ./...
 fmt:
-	gofmt -w cmd internal
+	$(GOLANGCI_LINT) fmt ./...
+lint:
+	$(GOLANGCI_LINT) run ./...
+vuln:
+	$(GOVULNCHECK) ./...
+# check runs every CI gate that needs no database.
+check: lint vuln test
 vet:
 	$(GO) vet ./...
 migrate-up:
