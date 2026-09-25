@@ -13,7 +13,7 @@ func (h *handlers) createPlan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	plan, err := h.training.SavePlan(r.Context(), uuid.Nil, in, true)
+	plan, err := h.training.SavePlan(r.Context(), owner(r), uuid.Nil, in, true)
 	if err != nil {
 		h.fail(w, r, err, "plan")
 		return
@@ -26,7 +26,7 @@ func (h *handlers) getPlan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	plan, err := h.training.GetPlan(r.Context(), id)
+	plan, err := h.training.GetPlan(r.Context(), owner(r), id)
 	if err != nil {
 		h.fail(w, r, err, "plan")
 		return
@@ -42,7 +42,7 @@ func (h *handlers) updatePlan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	plan, err := h.training.SavePlan(r.Context(), id, in, false)
+	plan, err := h.training.SavePlan(r.Context(), owner(r), id, in, false)
 	if err != nil {
 		h.fail(w, r, err, "plan")
 		return
@@ -54,18 +54,14 @@ func (h *handlers) deletePlan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.training.DeletePlan(r.Context(), id); err != nil {
+	if err := h.training.DeletePlan(r.Context(), owner(r), id); err != nil {
 		h.fail(w, r, err, "plan")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 func (h *handlers) listPlans(w http.ResponseWriter, r *http.Request) {
-	q, ok := queryValues(w, r, "user_id", "limit", "offset")
-	if !ok {
-		return
-	}
-	userID, ok := parseUUID(w, q.Get("user_id"))
+	q, ok := queryValues(w, r, "limit", "offset")
 	if !ok {
 		return
 	}
@@ -73,7 +69,7 @@ func (h *handlers) listPlans(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	plans, err := h.training.ListPlans(r.Context(), userID, page)
+	plans, err := h.training.ListPlans(r.Context(), owner(r), page)
 	if err != nil {
 		h.fail(w, r, err, "plan")
 		return
@@ -93,7 +89,7 @@ func (h *handlers) comparison(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	result, err := h.training.Compare(r.Context(), id, sessionID)
+	result, err := h.training.Compare(r.Context(), owner(r), id, sessionID)
 	if err != nil {
 		h.fail(w, r, err, "comparison")
 		return
@@ -105,7 +101,7 @@ func (h *handlers) createSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	session, err := h.training.SaveSession(r.Context(), uuid.Nil, in, true)
+	session, err := h.training.SaveSession(r.Context(), owner(r), uuid.Nil, in, true)
 	if err != nil {
 		h.fail(w, r, err, "session")
 		return
@@ -118,7 +114,7 @@ func (h *handlers) getSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	session, err := h.training.GetSession(r.Context(), id)
+	session, err := h.training.GetSession(r.Context(), owner(r), id)
 	if err != nil {
 		h.fail(w, r, err, "session")
 		return
@@ -134,7 +130,7 @@ func (h *handlers) updateSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	session, err := h.training.SaveSession(r.Context(), id, in, false)
+	session, err := h.training.SaveSession(r.Context(), owner(r), id, in, false)
 	if err != nil {
 		h.fail(w, r, err, "session")
 		return
@@ -146,18 +142,14 @@ func (h *handlers) deleteSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.training.DeleteSession(r.Context(), id); err != nil {
+	if err := h.training.DeleteSession(r.Context(), owner(r), id); err != nil {
 		h.fail(w, r, err, "session")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 func (h *handlers) listSessions(w http.ResponseWriter, r *http.Request) {
-	q, ok := queryValues(w, r, "user_id", "limit", "offset")
-	if !ok {
-		return
-	}
-	userID, ok := parseUUID(w, q.Get("user_id"))
+	q, ok := queryValues(w, r, "limit", "offset")
 	if !ok {
 		return
 	}
@@ -165,7 +157,7 @@ func (h *handlers) listSessions(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sessions, err := h.training.ListSessions(r.Context(), userID, page)
+	sessions, err := h.training.ListSessions(r.Context(), owner(r), page)
 	if err != nil {
 		h.fail(w, r, err, "session")
 		return

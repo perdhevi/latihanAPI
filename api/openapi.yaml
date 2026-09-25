@@ -1,8 +1,8 @@
 openapi: "3.0.3"
 info:
   title: "latihanApi"
-  version: "0.3.0"
-  description: "Personal sessions, plans, profiles and measurement history. /exercises has been removed. Every /api/v1 operation requires a bearer token from the configured provider. POST /api/v1/users links the caller's identity to a new profile; other operations require that profile. Ownership of user_id values is not yet enforced (phase 4). All responses include X-Request-ID. Input bodies are limited to 1 MiB; unknown JSON fields, unknown/repeated query parameters and multiple JSON values are rejected. Strings are trimmed. PUT fully replaces editable fields; no upserts. UUIDs and creation timestamps are server-managed. HTTP method errors use the same Error schema."
+  version: "0.4.0"
+  description: "Personal sessions, plans, profiles and measurement history. /exercises has been removed. Every /api/v1 operation requires a bearer token from the configured provider. POST /api/v1/users links the caller's identity to a new profile; other operations require that profile. Callers only ever see and change their own records: owners come from the token, never from input, and other users' records return 404. All responses include X-Request-ID. Input bodies are limited to 1 MiB; unknown JSON fields, unknown/repeated query parameters and multiple JSON values are rejected. Strings are trimmed. PUT fully replaces editable fields; no upserts. UUIDs and creation timestamps are server-managed. HTTP method errors use the same Error schema."
 servers:
   -
     url: "http://localhost:8080"
@@ -113,16 +113,8 @@ paths:
       tags:
         - "Sessions"
       summary: "List sessions"
-      description: "Required user_id filter. Newest performed_at first, then id DESC. No matches returns an empty items array."
+      description: "The caller's sessions, newest performed_at first, then id DESC. No matches returns an empty items array. user_id is not accepted."
       parameters:
-        -
-          name: "user_id"
-          in: "query"
-          required: true
-          schema:
-            type: "string"
-            format: "uuid"
-            description: "Nonzero UUID"
         -
           name: "limit"
           in: "query"
@@ -369,16 +361,8 @@ paths:
       tags:
         - "Plans"
       summary: "List plans"
-      description: "Required user_id filter. Newest created_at first, then id DESC. No matches returns an empty items array."
+      description: "The caller's plans, newest created_at first, then id DESC. No matches returns an empty items array. user_id is not accepted."
       parameters:
-        -
-          name: "user_id"
-          in: "query"
-          required: true
-          schema:
-            type: "string"
-            format: "uuid"
-            description: "Nonzero UUID"
         -
           name: "limit"
           in: "query"
@@ -636,10 +620,9 @@ paths:
         name: "userID"
         in: "path"
         required: true
+        description: "\"me\" or the caller's own user ID. Any other user ID returns 404."
         schema:
           type: "string"
-          format: "uuid"
-          description: "Nonzero UUID"
     get:
       operationId: "getUser"
       tags:
@@ -774,10 +757,9 @@ paths:
         name: "userID"
         in: "path"
         required: true
+        description: "\"me\" or the caller's own user ID. Any other user ID returns 404."
         schema:
           type: "string"
-          format: "uuid"
-          description: "Nonzero UUID"
     post:
       operationId: "createMeasurement"
       tags:
@@ -905,10 +887,9 @@ paths:
         name: "userID"
         in: "path"
         required: true
+        description: "\"me\" or the caller's own user ID. Any other user ID returns 404."
         schema:
           type: "string"
-          format: "uuid"
-          description: "Nonzero UUID"
       -
         name: "id"
         in: "path"
@@ -1516,14 +1497,9 @@ components:
       type: "object"
       additionalProperties: false
       required:
-        - "user_id"
         - "name"
         - "exercises"
       properties:
-        user_id:
-          type: "string"
-          format: "uuid"
-          description: "Nonzero UUID"
         name:
           type: "string"
           maxLength: 200
@@ -1583,15 +1559,10 @@ components:
       type: "object"
       additionalProperties: false
       required:
-        - "user_id"
         - "name"
         - "performed_at"
         - "exercises"
       properties:
-        user_id:
-          type: "string"
-          format: "uuid"
-          description: "Nonzero UUID"
         name:
           type: "string"
           maxLength: 200
@@ -1615,7 +1586,7 @@ components:
           maxItems: 100
           items:
             "$ref": "#/components/schemas/SessionExercise"
-      description: "Full replacement; owner cannot change. Optional plan_id must belong to user_id. plan_exercise_id links each actual entry to an entry in its saved plan snapshot and must not repeat. Omitted plan_exercise_id means unplanned. Keeping the same plan_id retains the original snapshot; changing/reattaching captures the current plan; null/omitted plan_id detaches. Times are nonzero RFC3339."
+      description: "Full replacement. The owner is always the caller and is not part of the input. Optional plan_id must be one of the caller's plans. plan_exercise_id links each actual entry to an entry in its saved plan snapshot and must not repeat. Omitted plan_exercise_id means unplanned. Keeping the same plan_id retains the original snapshot; changing/reattaching captures the current plan; null/omitted plan_id detaches. Times are nonzero RFC3339."
     Session:
       type: "object"
       additionalProperties: false

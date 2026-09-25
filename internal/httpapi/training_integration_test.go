@@ -79,7 +79,7 @@ func TestTrainingAPIIntegration(t *testing.T) {
 	call(t, h, "PUT", userURL, profile.UserInput{DisplayName: "Updated"}, 200, &user)
 	call(t, h, "GET", userURL, nil, 200, nil)
 
-	planInput := training.PlanInput{UserID: user.ID, Name: "Leg day", Exercises: plannedExercises()}
+	planInput := training.PlanInput{Name: "Leg day", Exercises: plannedExercises()}
 	var plan training.Plan
 	call(t, h, "POST", "/api/v1/plans", planInput, 201, &plan)
 	planURL := "/api/v1/plans/" + plan.ID.String()
@@ -90,17 +90,17 @@ func TestTrainingAPIIntegration(t *testing.T) {
 	var planPage struct {
 		Items []training.Plan `json:"items"`
 	}
-	call(t, h, "GET", "/api/v1/plans?user_id="+user.ID.String(), nil, 200, &planPage)
+	call(t, h, "GET", "/api/v1/plans", nil, 200, &planPage)
 	if len(planPage.Items) != 1 {
 		t.Fatal("plan missing from list")
 	}
-	call(t, h, "GET", "/api/v1/plans?user_id="+other.ID.String(), nil, 200, &planPage)
+	callAs(t, h, "other", "GET", "/api/v1/plans", nil, 200, &planPage)
 	if len(planPage.Items) != 0 {
 		t.Fatal("plan leaked into another user's list")
 	}
 
 	squatID, runningID := plan.Exercises[0].ID, plan.Exercises[1].ID
-	in := training.SessionInput{UserID: user.ID, Name: "Morning training", PerformedAt: time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC), PlanID: &plan.ID, Exercises: []training.SessionExercise{
+	in := training.SessionInput{Name: "Morning training", PerformedAt: time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC), PlanID: &plan.ID, Exercises: []training.SessionExercise{
 		{PlanExerciseID: &squatID, ExerciseInput: training.ExerciseInput{Name: "Squat", Kind: "strength", Sets: []training.Set{{Repetitions: 10, WeightKG: number(55)}}}},
 		{PlanExerciseID: &runningID, ExerciseInput: training.ExerciseInput{Name: "Running", Kind: "cardio", Minutes: number(25), AvgBPM: bpm(145)}},
 	}}
@@ -139,11 +139,8 @@ func TestTrainingAPIIntegration(t *testing.T) {
 	call(t, h, "GET", sessionURL, nil, 200, &session)
 
 	// Bad links and cross-user writes must leave the stored session intact.
+	callAs(t, h, "other", "PUT", sessionURL, in, 404, nil)
 	wrong := in
-	wrong.UserID = other.ID
-	call(t, h, "POST", "/api/v1/sessions", wrong, 400, nil)
-	call(t, h, "PUT", sessionURL, wrong, 404, nil)
-	wrong = in
 	wrong.Exercises = append([]training.SessionExercise(nil), in.Exercises...)
 	wrong.Exercises[0].PlanExerciseID = &plan.Exercises[0].ID
 	call(t, h, "PUT", sessionURL, wrong, 400, nil)
@@ -151,12 +148,10 @@ func TestTrainingAPIIntegration(t *testing.T) {
 	if comparison.PlannedTotals.VolumeKG != 800 {
 		t.Fatal("failed update changed session")
 	}
-	wrongPlan := planInput
-	wrongPlan.UserID = other.ID
-	call(t, h, "PUT", planURL, wrongPlan, 404, nil)
+	callAs(t, h, "other", "PUT", planURL, planInput, 404, nil)
 
 	// Standalone session, per-user filtering, chronological ordering and pagination.
-	standalone := training.SessionInput{UserID: user.ID, Name: "Walk", PerformedAt: in.PerformedAt.Add(time.Hour), Exercises: []training.SessionExercise{{ExerciseInput: training.ExerciseInput{Name: "Walk", Kind: "cardio", Minutes: number(15)}}}}
+	standalone := training.SessionInput{Name: "Walk", PerformedAt: in.PerformedAt.Add(time.Hour), Exercises: []training.SessionExercise{{ExerciseInput: training.ExerciseInput{Name: "Walk", Kind: "cardio", Minutes: number(15)}}}}
 	var second training.Session
 	call(t, h, "POST", "/api/v1/sessions", standalone, 201, &second)
 	if second.PlanSnapshot != nil || second.PlanID != nil {
@@ -165,15 +160,15 @@ func TestTrainingAPIIntegration(t *testing.T) {
 	var page struct {
 		Items []training.Session `json:"items"`
 	}
-	call(t, h, "GET", "/api/v1/sessions?user_id="+user.ID.String()+"&limit=1", nil, 200, &page)
+	call(t, h, "GET", "/api/v1/sessions?limit=1", nil, 200, &page)
 	if len(page.Items) != 1 || page.Items[0].ID != second.ID {
 		t.Fatal("session ordering/pagination wrong")
 	}
-	call(t, h, "GET", "/api/v1/sessions?user_id="+user.ID.String()+"&limit=1&offset=1", nil, 200, &page)
+	call(t, h, "GET", "/api/v1/sessions?limit=1&offset=1", nil, 200, &page)
 	if len(page.Items) != 1 || page.Items[0].ID != session.ID {
 		t.Fatal("session second page wrong")
 	}
-	call(t, h, "GET", "/api/v1/sessions?user_id="+other.ID.String(), nil, 200, &page)
+	callAs(t, h, "other", "GET", "/api/v1/sessions", nil, 200, &page)
 	if len(page.Items) != 0 {
 		t.Fatal("session leaked into another user's list")
 	}
@@ -243,14 +238,11 @@ func TestTrainingAPIIntegration(t *testing.T) {
 	call(t, h, "PUT", planURL, planInput, 404, nil)
 	call(t, h, "DELETE", userURL, nil, 204, nil)
 	// The deleted user's identity has no profile any more.
-	call(t, h, "GET", "/api/v1/plans?user_id="+user.ID.String(), nil, 403, nil)
-	// References to the deleted user, made by someone who still has a profile.
+	call(t, h, "GET", "/api/v1/plans", nil, 403, nil)
+	// The deleted user's paths, requested by someone who still has a profile.
 	callAs(t, h, "other", "GET", userURL, nil, 404, nil)
 	callAs(t, h, "other", "GET", measurementsURL, nil, 404, nil)
-	callAs(t, h, "other", "POST", measurementsURL, mInput, 400, nil)
-	callAs(t, h, "other", "POST", "/api/v1/plans", planInput, 400, nil)
-	standalone.UserID = user.ID
-	callAs(t, h, "other", "POST", "/api/v1/sessions", standalone, 400, nil)
+	callAs(t, h, "other", "POST", measurementsURL, mInput, 404, nil)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -296,13 +288,93 @@ func TestMigrationRoundTrip(t *testing.T) {
 func TestIdentityLinkingIntegration(t *testing.T) {
 	pool := testdb.Open(t)
 	h := NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
-	id := uuid.NewString()
-	callAs(t, h, "newcomer", "GET", "/api/v1/sessions?user_id="+id, nil, 403, nil)
+	callAs(t, h, "newcomer", "GET", "/api/v1/sessions", nil, 403, nil)
 	var user profile.User
 	callAs(t, h, "newcomer", "POST", "/api/v1/users", profile.UserInput{DisplayName: "New"}, 201, &user)
-	callAs(t, h, "newcomer", "GET", "/api/v1/sessions?user_id="+user.ID.String(), nil, 200, nil)
+	callAs(t, h, "newcomer", "GET", "/api/v1/sessions", nil, 200, nil)
 	// Deleting the profile releases the identity, which can then start over.
 	callAs(t, h, "newcomer", "DELETE", "/api/v1/users/"+user.ID.String(), nil, 204, nil)
-	callAs(t, h, "newcomer", "GET", "/api/v1/sessions?user_id="+user.ID.String(), nil, 403, nil)
+	callAs(t, h, "newcomer", "GET", "/api/v1/sessions", nil, 403, nil)
 	callAs(t, h, "newcomer", "POST", "/api/v1/users", profile.UserInput{DisplayName: "Again"}, 201, nil)
+}
+
+// TestCrossUserAccessIntegration is the authorization contract: an
+// authenticated intruder who knows every ID of a victim's records can neither
+// read nor change them, and learns nothing beyond "not found".
+func TestCrossUserAccessIntegration(t *testing.T) {
+	pool := testdb.Open(t)
+	h := NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	var victim, intruder profile.User
+	callAs(t, h, "victim", "POST", "/api/v1/users", profile.UserInput{DisplayName: "Victim"}, 201, &victim)
+	callAs(t, h, "intruder", "POST", "/api/v1/users", profile.UserInput{DisplayName: "Intruder"}, 201, &intruder)
+
+	planInput := training.PlanInput{Name: "Private plan", Exercises: plannedExercises()}
+	var plan training.Plan
+	callAs(t, h, "victim", "POST", "/api/v1/plans", planInput, 201, &plan)
+	squatID := plan.Exercises[0].ID
+	sessionInput := training.SessionInput{Name: "Private session", PerformedAt: time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC), PlanID: &plan.ID, Exercises: []training.SessionExercise{
+		{PlanExerciseID: &squatID, ExerciseInput: training.ExerciseInput{Name: "Squat", Kind: "strength", Sets: []training.Set{{Repetitions: 5, WeightKG: number(60)}}}},
+	}}
+	var session training.Session
+	callAs(t, h, "victim", "POST", "/api/v1/sessions", sessionInput, 201, &session)
+	var measurement profile.Measurement
+	measurementInput := profile.MeasurementInput{MeasuredAt: sessionInput.PerformedAt, WeightKG: number(70)}
+	callAs(t, h, "victim", "POST", "/api/v1/users/me/measurements", measurementInput, 201, &measurement)
+
+	userURL := "/api/v1/users/" + victim.ID.String()
+	planURL := "/api/v1/plans/" + plan.ID.String()
+	sessionURL := "/api/v1/sessions/" + session.ID.String()
+	measurementURL := userURL + "/measurements/" + measurement.ID.String()
+	for _, tc := range []struct {
+		method, path string
+		body         any
+	}{
+		{"GET", userURL, nil},
+		{"PUT", userURL, profile.UserInput{DisplayName: "Hacked"}},
+		{"DELETE", userURL, nil},
+		{"GET", userURL + "/measurements", nil},
+		{"POST", userURL + "/measurements", measurementInput},
+		{"GET", measurementURL, nil},
+		{"PUT", measurementURL, measurementInput},
+		{"DELETE", measurementURL, nil},
+		{"GET", planURL, nil},
+		{"PUT", planURL, planInput},
+		{"DELETE", planURL, nil},
+		{"GET", planURL + "/comparison?session_id=" + session.ID.String(), nil},
+		{"GET", sessionURL, nil},
+		{"PUT", sessionURL, sessionInput},
+		{"DELETE", sessionURL, nil},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			callAs(t, h, "intruder", tc.method, tc.path, tc.body, 404, nil)
+		})
+	}
+
+	// Lists only ever show the caller's own records.
+	var plans struct{ Items []training.Plan }
+	callAs(t, h, "intruder", "GET", "/api/v1/plans", nil, 200, &plans)
+	var sessions struct{ Items []training.Session }
+	callAs(t, h, "intruder", "GET", "/api/v1/sessions", nil, 200, &sessions)
+	if len(plans.Items) != 0 || len(sessions.Items) != 0 {
+		t.Fatal("another user's records appeared in a list")
+	}
+	// Attaching someone else's plan, or linking to its entries, is refused.
+	stolen := sessionInput
+	callAs(t, h, "intruder", "POST", "/api/v1/sessions", stolen, 400, nil)
+	stolen.PlanID = nil
+	callAs(t, h, "intruder", "POST", "/api/v1/sessions", stolen, 400, nil)
+
+	// The victim's data is exactly as it was.
+	var got training.Plan
+	callAs(t, h, "victim", "GET", planURL, nil, 200, &got)
+	if got.Name != "Private plan" || !got.UpdatedAt.Equal(plan.UpdatedAt) {
+		t.Fatalf("plan changed: %+v", got)
+	}
+	callAs(t, h, "victim", "GET", sessionURL, nil, 200, nil)
+	callAs(t, h, "victim", "GET", "/api/v1/users/me/measurements/"+measurement.ID.String(), nil, 200, nil)
+	var me profile.User
+	callAs(t, h, "victim", "GET", "/api/v1/users/me", nil, 200, &me)
+	if me.ID != victim.ID || me.DisplayName != "Victim" {
+		t.Fatalf("profile changed: %+v", me)
+	}
 }

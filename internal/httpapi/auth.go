@@ -82,3 +82,27 @@ func challenge(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("WWW-Authenticate", value)
 	writeError(w, http.StatusUnauthorized, "unauthenticated", "valid bearer token required")
 }
+
+// owner is the authenticated caller's user ID. Handlers use it, never a client
+// supplied ID, to decide whose records a request touches.
+func owner(r *http.Request) uuid.UUID { return principalFrom(r.Context()).userID }
+
+// ownUserID resolves a {userID} path segment. "me" names the caller; the
+// caller's own UUID is accepted too. Any other user is reported as not found,
+// so callers cannot probe which user IDs exist.
+func ownUserID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	caller := owner(r)
+	value := r.PathValue("userID")
+	if value == "me" {
+		return caller, true
+	}
+	id, ok := parseUUID(w, value)
+	if !ok {
+		return uuid.Nil, false
+	}
+	if id != caller {
+		writeError(w, http.StatusNotFound, "user_not_found", "user not found")
+		return uuid.Nil, false
+	}
+	return id, true
+}

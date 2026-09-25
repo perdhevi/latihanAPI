@@ -26,12 +26,12 @@ VM: Caddy (TLS :443) → latihan-api → PostgreSQL   (only Caddy publishes port
 | phase-00 | Baseline and threat model | Module path `github.com/perdhevi/latihanAPI`; STRIDE review of the API | Done (STRIDE doc pending) |
 | phase-01 | Guardrails | golangci-lint (gosec, errorlint, noctx, …), govulncheck, SHA-pinned Actions, Dependabot | Done |
 | phase-02 | Pluggable authentication | `auth` contract module, JWKS verifier, `firebase` / `cognito` / `oidc` providers, conformance kit, identity linking | Done |
-| phase-03 | Built-in token issuer | `jwt` provider: register/login/refresh, Ed25519 keys, argon2id, refresh-token rotation; multiple providers at once | Planned |
-| phase-04 | Authorization | `user_id` comes from the principal only; owner-scoped SQL; 404 for other users' records; optional RLS | Planned |
+| phase-03 | Authorization | Owner comes from the token only (`user_id` removed from input, `/users/me`); owner-scoped SQL; 404 for other users' records; cross-user test suite | Done |
+| phase-04 | Built-in token issuer | `jwt` provider: register/login/refresh, Ed25519 keys, argon2id, refresh-token rotation; multiple providers at once | Planned |
 | phase-05 | Abuse resistance | Rate limits (429 + `Retry-After`), cursor pagination, `statement_timeout`, header and concurrency caps | Planned |
 | phase-06 | Safe retries | `Idempotency-Key` on POST, `ETag` / `If-Match` on PUT | Planned |
 | phase-07 | Observability | OpenTelemetry traces and metrics, panic stacks, admin port for metrics/pprof | Planned |
-| phase-08 | Secrets, TLS, least privilege | `*_FILE` secrets, Caddy TLS, `sslmode=verify-full`, migrator/app DB roles | Planned |
+| phase-08 | Secrets, TLS, least privilege | `*_FILE` secrets, Caddy TLS, `sslmode=verify-full`, migrator/app DB roles, optional Postgres row-level security as a second ownership layer | Planned |
 | phase-09 | Shipping | Distroless image by digest, SBOM, cosign, hardened Compose, VM baseline, deploy workflow | Planned |
 | phase-10 | Proving it | Fuzzing, OpenAPI contract tests, load tests, cross-user access tests | Planned |
 | phase-11 | Health data responsibly | Export, erasure, audit log, backups and restore drills | Planned |
@@ -52,7 +52,7 @@ database, and the error lists the registered names.
 | `firebase` | Google | `AUTH_FIREBASE_PROJECT_ID` |
 | `cognito` | AWS | `AUTH_COGNITO_REGION`, `AUTH_COGNITO_USER_POOL_ID`, `AUTH_COGNITO_CLIENT_ID`, `AUTH_COGNITO_TOKEN_USE` (`access` or `id`) |
 | `oidc` | Any OIDC issuer (Keycloak, Auth0, Zitadel, …) | `AUTH_OIDC_ISSUER`, `AUTH_OIDC_AUDIENCE`, optional `AUTH_OIDC_JWKS_URL`, `AUTH_OIDC_ALGORITHMS` |
-| `jwt` (phase-03) | This service | Issuer, audience, signing key file |
+| `jwt` (phase-04) | This service | Issuer, audience, signing key file |
 
 `firebase` and `cognito` are thin presets over one shared verifier
 (`internal/authn/jwks`); they only derive the issuer, audience rule and key URL:
@@ -97,7 +97,7 @@ Add a provider by running `go get` on its module, adding its import to
 (login, key publication) implement `RouteRegistrar`; those routes are mounted
 without authentication.
 
-### Phase-03 plan: built-in `jwt` provider
+### Phase-04 plan: built-in `jwt` provider
 
 - Ed25519 signing keys with `kid` rotation, published at `/.well-known/jwks.json`.
 - Access tokens ~15 minutes; refresh tokens opaque, stored hashed, rotated on

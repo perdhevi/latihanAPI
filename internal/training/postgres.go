@@ -55,11 +55,11 @@ func (r *PostgresRepository) SavePlan(ctx context.Context, p Plan, create bool) 
 	// Including the owner in the predicate prevents transfer to another user.
 	return scanPlan(r.pool.QueryRow(ctx, `UPDATE plans SET name=$3,notes=$4,exercises=$5,updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1 AND user_id=$2 RETURNING `+planColumns, p.ID, p.UserID, p.Name, p.Notes, entries))
 }
-func (r *PostgresRepository) GetPlan(ctx context.Context, id uuid.UUID) (Plan, error) {
-	return scanPlan(r.pool.QueryRow(ctx, `SELECT `+planColumns+` FROM plans WHERE id=$1`, id))
+func (r *PostgresRepository) GetPlan(ctx context.Context, owner, id uuid.UUID) (Plan, error) {
+	return scanPlan(r.pool.QueryRow(ctx, `SELECT `+planColumns+` FROM plans WHERE id=$1 AND user_id=$2`, id, owner))
 }
-func (r *PostgresRepository) ListPlans(ctx context.Context, userID uuid.UUID, page validation.Page) ([]Plan, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+planColumns+` FROM plans WHERE user_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3`, userID, page.Limit, page.Offset)
+func (r *PostgresRepository) ListPlans(ctx context.Context, owner uuid.UUID, page validation.Page) ([]Plan, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+planColumns+` FROM plans WHERE user_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3`, owner, page.Limit, page.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -74,8 +74,8 @@ func (r *PostgresRepository) ListPlans(ctx context.Context, userID uuid.UUID, pa
 	}
 	return result, rows.Err()
 }
-func (r *PostgresRepository) DeletePlan(ctx context.Context, id uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM plans WHERE id=$1`, id)
+func (r *PostgresRepository) DeletePlan(ctx context.Context, owner, id uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM plans WHERE id=$1 AND user_id=$2`, id, owner)
 	if errors.Is(mapError(err), ErrReference) {
 		return ErrConflict
 	}
@@ -109,7 +109,7 @@ func scanSession(row pgx.Row) (Session, error) {
 	s.UpdatedAt = s.UpdatedAt.UTC()
 	return s, nil
 }
-func (r *PostgresRepository) SaveSession(ctx context.Context, id uuid.UUID, in SessionInput, create bool) (Session, error) {
+func (r *PostgresRepository) SaveSession(ctx context.Context, owner, id uuid.UUID, in SessionInput, create bool) (Session, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return Session{}, err
@@ -117,19 +117,16 @@ func (r *PostgresRepository) SaveSession(ctx context.Context, id uuid.UUID, in S
 	defer func() { _ = tx.Rollback(ctx) }() // no-op after a successful Commit
 	var snapshot *Plan
 	if !create {
-		previous, err := scanSession(tx.QueryRow(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE id=$1 FOR UPDATE`, id))
+		previous, err := scanSession(tx.QueryRow(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE id=$1 AND user_id=$2 FOR UPDATE`, id, owner))
 		if err != nil {
 			return Session{}, err
-		}
-		if previous.UserID != in.UserID {
-			return Session{}, ErrNotFound
 		}
 		if in.PlanID != nil && previous.PlanID != nil && *in.PlanID == *previous.PlanID {
 			snapshot = previous.PlanSnapshot
 		}
 	}
 	if in.PlanID != nil && snapshot == nil {
-		p, err := scanPlan(tx.QueryRow(ctx, `SELECT `+planColumns+` FROM plans WHERE id=$1 AND user_id=$2 FOR SHARE`, *in.PlanID, in.UserID))
+		p, err := scanPlan(tx.QueryRow(ctx, `SELECT `+planColumns+` FROM plans WHERE id=$1 AND user_id=$2 FOR SHARE`, *in.PlanID, owner))
 		if errors.Is(err, ErrNotFound) {
 			return Session{}, ErrReference
 		}
@@ -156,7 +153,7 @@ func (r *PostgresRepository) SaveSession(ctx context.Context, id uuid.UUID, in S
 	if !create {
 		query = `UPDATE sessions SET name=$3,notes=$4,performed_at=$5,plan_id=$6,plan_snapshot=$7,exercises=$8,updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1 AND user_id=$2 RETURNING ` + sessionColumns
 	}
-	saved, err := scanSession(tx.QueryRow(ctx, query, id, in.UserID, in.Name, in.Notes, in.PerformedAt, in.PlanID, snapshotJSON, entries))
+	saved, err := scanSession(tx.QueryRow(ctx, query, id, owner, in.Name, in.Notes, in.PerformedAt, in.PlanID, snapshotJSON, entries))
 	if err != nil {
 		return Session{}, err
 	}
@@ -165,11 +162,11 @@ func (r *PostgresRepository) SaveSession(ctx context.Context, id uuid.UUID, in S
 	}
 	return saved, nil
 }
-func (r *PostgresRepository) GetSession(ctx context.Context, id uuid.UUID) (Session, error) {
-	return scanSession(r.pool.QueryRow(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE id=$1`, id))
+func (r *PostgresRepository) GetSession(ctx context.Context, owner, id uuid.UUID) (Session, error) {
+	return scanSession(r.pool.QueryRow(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE id=$1 AND user_id=$2`, id, owner))
 }
-func (r *PostgresRepository) ListSessions(ctx context.Context, userID uuid.UUID, page validation.Page) ([]Session, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE user_id=$1 ORDER BY performed_at DESC,id DESC LIMIT $2 OFFSET $3`, userID, page.Limit, page.Offset)
+func (r *PostgresRepository) ListSessions(ctx context.Context, owner uuid.UUID, page validation.Page) ([]Session, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE user_id=$1 ORDER BY performed_at DESC,id DESC LIMIT $2 OFFSET $3`, owner, page.Limit, page.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -184,8 +181,8 @@ func (r *PostgresRepository) ListSessions(ctx context.Context, userID uuid.UUID,
 	}
 	return result, rows.Err()
 }
-func (r *PostgresRepository) DeleteSession(ctx context.Context, id uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM sessions WHERE id=$1`, id)
+func (r *PostgresRepository) DeleteSession(ctx context.Context, owner, id uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM sessions WHERE id=$1 AND user_id=$2`, id, owner)
 	if err != nil {
 		return err
 	}

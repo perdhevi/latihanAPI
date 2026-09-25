@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/perdhevi/latihanAPI/internal/validation"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -62,7 +64,7 @@ func TestCompare(t *testing.T) {
 		{ID: second, ExerciseInput: cardio("Run", 30, ptr(140))},
 		{ID: third, ExerciseInput: strength("Squat", 5, 60)},
 	}}
-	s := Session{ID: uuid.New(), PlanSnapshot: &p, SessionInput: SessionInput{UserID: uuid.New(), PlanID: &p.ID, Exercises: []SessionExercise{
+	s := Session{ID: uuid.New(), PlanSnapshot: &p, UserID: uuid.New(), SessionInput: SessionInput{PlanID: &p.ID, Exercises: []SessionExercise{
 		{PlanExerciseID: &first, ExerciseInput: strength("Back Squat", 10, 55)},
 		{PlanExerciseID: &second, ExerciseInput: cardio("Run", 25, ptr(145))},
 		{ExerciseInput: strength("Push-Up", 10, 0)},
@@ -127,32 +129,35 @@ func (r *serviceRepo) SavePlan(ctx context.Context, p Plan, create bool) (Plan, 
 	r.calls++
 	return p, r.err
 }
-func (r *serviceRepo) SaveSession(ctx context.Context, id uuid.UUID, in SessionInput, create bool) (Session, error) {
+func (r *serviceRepo) SaveSession(ctx context.Context, owner, id uuid.UUID, in SessionInput, create bool) (Session, error) {
 	r.ctx = ctx
 	r.session = in
 	r.calls++
-	return Session{ID: id, SessionInput: in}, r.err
+	return Session{ID: id, UserID: owner, SessionInput: in}, r.err
 }
 func TestServiceValidationAndContext(t *testing.T) {
 	repo := &serviceRepo{}
 	s := NewService(repo)
 	ctx := t.Context()
 	user := uuid.New()
-	p, err := s.SavePlan(ctx, uuid.Nil, PlanInput{UserID: user, Name: "  Leg day  ", Exercises: []ExerciseInput{strength(" Squat ", 8, 50)}}, true)
-	if err != nil || p.ID == uuid.Nil || p.Exercises[0].ID == uuid.Nil || p.Name != "Leg day" || p.Exercises[0].Name != "Squat" || repo.ctx != ctx {
+	p, err := s.SavePlan(ctx, user, uuid.Nil, PlanInput{Name: "  Leg day  ", Exercises: []ExerciseInput{strength(" Squat ", 8, 50)}}, true)
+	if err != nil || p.ID == uuid.Nil || p.UserID != user || p.Exercises[0].ID == uuid.Nil || p.Name != "Leg day" || p.Exercises[0].Name != "Squat" || repo.ctx != ctx {
 		t.Fatalf("save plan: %+v %v", p, err)
 	}
-	_, err = s.SaveSession(ctx, uuid.Nil, SessionInput{UserID: user, Name: "Done", Exercises: []SessionExercise{{ExerciseInput: strength("Squat", 8, 50)}}}, true)
+	_, err = s.SaveSession(ctx, user, uuid.Nil, SessionInput{Name: "Done", Exercises: []SessionExercise{{ExerciseInput: strength("Squat", 8, 50)}}}, true)
 	if err == nil || repo.calls != 1 {
 		t.Fatal("missing performed_at reached repository")
 	}
-	_, err = s.SavePlan(ctx, uuid.Nil, PlanInput{UserID: uuid.Nil, Name: "Bad", Exercises: []ExerciseInput{strength("Squat", 8, 50)}}, true)
-	if err == nil || repo.calls != 1 {
-		t.Fatal("nil user reached repository")
+	_, err = s.SavePlan(ctx, uuid.Nil, uuid.Nil, PlanInput{Name: "Bad", Exercises: []ExerciseInput{strength("Squat", 8, 50)}}, true)
+	if !errors.Is(err, errNoOwner) || repo.calls != 1 {
+		t.Fatal("missing owner reached repository")
+	}
+	if _, err := s.ListSessions(ctx, uuid.Nil, validation.Page{Limit: 20}); !errors.Is(err, errNoOwner) {
+		t.Fatal("list without owner allowed")
 	}
 	failure := errors.New("database unavailable")
 	repo.err = failure
-	_, err = s.SaveSession(ctx, uuid.Nil, SessionInput{UserID: user, Name: "Done", PerformedAt: time.Now(), Exercises: []SessionExercise{{ExerciseInput: strength("Squat", 8, 50)}}}, true)
+	_, err = s.SaveSession(ctx, user, uuid.Nil, SessionInput{Name: "Done", PerformedAt: time.Now(), Exercises: []SessionExercise{{ExerciseInput: strength("Squat", 8, 50)}}}, true)
 	if !errors.Is(err, failure) || repo.ctx != ctx {
 		t.Fatal("repository error or context lost")
 	}

@@ -19,10 +19,17 @@ Every `/api/v1` request needs a bearer token from a pluggable provider: Firebase
 Amazon Cognito or any OpenID Connect issuer, chosen in `.env` with no code changes
 (see [Authentication](#authentication)).
 
-**Ownership is not enforced yet.** Authenticated callers can still read or change
-another user's records if they know its IDs; phase 4 of the
-[hardening roadmap](docs/ROADMAP.md) closes this. Until then, keep the service on a
-trusted network. Compose binds to localhost.
+Callers only ever see and change their own records. The owner of every record comes
+from the verified token, never from request input, and another user's records answer
+404 exactly as if they did not exist. Compose binds to localhost; see the
+[hardening roadmap](docs/ROADMAP.md) for what comes next.
+
+## Breaking change: owners come from the token
+
+Requests no longer carry `user_id`. Plan and session bodies that include it, and
+list queries such as `/sessions?user_id=...`, are rejected with 400 because unknown
+fields and parameters are never ignored. Lists return the caller's own records, and
+`/users/me` addresses the caller's profile. Responses still include `user_id`.
 
 ## What changed from the Exercise Library API
 
@@ -93,7 +100,7 @@ Then try the seeded comparison:
 
 ```sh
 curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/plans/20000000-0000-4000-8000-000000000001/comparison?session_id=30000000-0000-4000-8000-000000000001'
-curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/sessions?user_id=10000000-0000-4000-8000-000000000001'
+curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/sessions'
 ```
 
 `docker compose down` retains the database. `docker compose down -v` deletes it.
@@ -154,27 +161,27 @@ response codes are in [api/openapi.yaml](api/openapi.yaml) (OpenAPI 3.0.3).
 
 | Endpoint | Methods | Purpose |
 | --- | --- | --- |
-| `/users` | POST | Create a user profile and return its UUID |
-| `/users/{userID}` | GET, PUT, DELETE | Read, replace, or delete a profile |
-| `/users/{userID}/measurements` | GET, POST | Historical measurements and new records |
-| `/users/{userID}/measurements/{id}` | GET, PUT, DELETE | Read, correct, or delete a historical record |
-| `/plans` | GET, POST | List a user's plans or create one |
+| `/users` | POST | Create the caller's profile and return its UUID |
+| `/users/me` | GET, PUT, DELETE | Read, replace, or delete the caller's profile |
+| `/users/me/measurements` | GET, POST | Historical measurements and new records |
+| `/users/me/measurements/{id}` | GET, PUT, DELETE | Read, correct, or delete a historical record |
+| `/plans` | GET, POST | List the caller's plans or create one |
 | `/plans/{id}` | GET, PUT, DELETE | Plan CRUD |
 | `/plans/{id}/comparison?session_id=UUID` | GET | Compare the attached plan snapshot with actual results |
-| `/sessions` | GET, POST | List a user's completed workouts or record one |
+| `/sessions` | GET, POST | List the caller's completed workouts or record one |
 | `/sessions/{id}` | GET, PUT, DELETE | Session CRUD |
 
-Session and plan lists require `user_id=UUID`. All lists support `limit` (1..100,
+`me` may be replaced by the caller's own user ID; any other user ID returns 404.
+Lists contain only the caller's records. All lists support `limit` (1..100,
 default 20) and `offset` (0..2147483647, default 0). Responses are
 `{"items":[],"limit":20,"offset":0}`. Sessions sort by `performed_at DESC, id DESC`,
 measurements by `measured_at DESC, id DESC`, and plans by `created_at DESC, id DESC`.
-An existing user with no history has an empty measurement list; an unknown user
-returns 404. Session/plan lists return an empty page when the user has no records.
+Lists return an empty page when the caller has no records.
 Offset pagination is not a consistent snapshot during concurrent writes.
 
 Creates return 201 with `Location`; reads and replacements return 200; deletes
-return 204. Missing records return 404. PUT never upserts and cannot transfer
-ownership. Deleting a plan used by a session, or a user with dependent records,
+return 204. Missing records, and records owned by someone else, return 404. PUT
+never upserts and cannot transfer ownership. Deleting a plan used by a session, or a user with dependent records,
 returns 409 instead of silently deleting history. Delete dependencies explicitly.
 
 ## Profile → plan → session
@@ -187,15 +194,14 @@ curl -X POST http://localhost:8080/api/v1/users \
   -H 'Content-Type: application/json' -d '{"display_name":"Alex"}'
 ```
 
-Use the returned `id` as `user_id`, and send the same `Authorization` header on
-every request below. User profiles currently contain a display name;
+Send the same `Authorization` header on every request below; the API knows
+whose records they are from the token. User profiles currently contain a display name;
 body measurements live in timestamped history rather than mutable profile fields.
 
-Create a plan by posting this body to `/api/v1/plans` (replace `USER_UUID`):
+Create a plan by posting this body to `/api/v1/plans`:
 
 ```json
 {
-  "user_id": "USER_UUID",
   "name": "Leg day",
   "notes": "Strength followed by cardio",
   "exercises": [
@@ -213,7 +219,6 @@ results, POST to `/api/v1/sessions` using the plan and exercise IDs returned abo
 
 ```json
 {
-  "user_id": "USER_UUID",
   "name": "Morning training",
   "performed_at": "2026-09-23T08:00:00Z",
   "plan_id": "PLAN_UUID",
@@ -258,7 +263,7 @@ this with a composite foreign key. Comparison of an unrelated session returns 40
 
 ## Measurement history
 
-POST to `/api/v1/users/USER_UUID/measurements`:
+POST to `/api/v1/users/me/measurements`:
 
 ```json
 {
@@ -390,8 +395,9 @@ user needs schema creation permission. Never use a production database for tests
 The integration tag fails if its database URL is missing. Tests cover CRUD,
 ownership constraints, stable plan snapshots, plan changes/detachment, comparison
 metrics, missing/unplanned exercises, history ordering, pagination, cancellation,
-deletion conflicts, migration rollback/reapplication, identity linking, and the
-401/403/409/503 authentication responses. Every built-in provider also runs the
+deletion conflicts, migration rollback/reapplication, identity linking, the 401/403/409/503
+authentication responses, and cross-user access: an intruder holding every ID of
+another user's records gets 404 on every route and the records stay unchanged. Every built-in provider also runs the
 `auth/authtest` conformance suite against a fake TLS identity provider.
 
 CI runs three jobs: **lint** (tidy modules, golangci-lint with gosec and other

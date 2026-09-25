@@ -21,7 +21,7 @@ func (h *handlers) createUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, user)
 }
 func (h *handlers) getUser(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r, "userID")
+	id, ok := ownUserID(w, r)
 	if !ok {
 		return
 	}
@@ -33,7 +33,7 @@ func (h *handlers) getUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, user)
 }
 func (h *handlers) updateUser(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r, "userID")
+	id, ok := ownUserID(w, r)
 	if !ok {
 		return
 	}
@@ -49,7 +49,7 @@ func (h *handlers) updateUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, user)
 }
 func (h *handlers) deleteUser(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r, "userID")
+	id, ok := ownUserID(w, r)
 	if !ok {
 		return
 	}
@@ -60,7 +60,7 @@ func (h *handlers) deleteUser(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 func (h *handlers) createMeasurement(w http.ResponseWriter, r *http.Request) {
-	userID, ok := pathID(w, r, "userID")
+	userID, ok := ownUserID(w, r)
 	if !ok {
 		return
 	}
@@ -77,7 +77,7 @@ func (h *handlers) createMeasurement(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, m)
 }
 func (h *handlers) getMeasurement(w http.ResponseWriter, r *http.Request) {
-	userID, ok := pathID(w, r, "userID")
+	userID, ok := ownUserID(w, r)
 	if !ok {
 		return
 	}
@@ -93,7 +93,7 @@ func (h *handlers) getMeasurement(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, m)
 }
 func (h *handlers) updateMeasurement(w http.ResponseWriter, r *http.Request) {
-	userID, ok := pathID(w, r, "userID")
+	userID, ok := ownUserID(w, r)
 	if !ok {
 		return
 	}
@@ -113,7 +113,7 @@ func (h *handlers) updateMeasurement(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, m)
 }
 func (h *handlers) deleteMeasurement(w http.ResponseWriter, r *http.Request) {
-	userID, ok := pathID(w, r, "userID")
+	userID, ok := ownUserID(w, r)
 	if !ok {
 		return
 	}
@@ -128,7 +128,7 @@ func (h *handlers) deleteMeasurement(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 func (h *handlers) listMeasurements(w http.ResponseWriter, r *http.Request) {
-	userID, ok := pathID(w, r, "userID")
+	userID, ok := ownUserID(w, r)
 	if !ok {
 		return
 	}

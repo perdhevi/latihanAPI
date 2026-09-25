@@ -32,10 +32,12 @@ type fakeTraining struct {
 	err        error
 	panicOnGet bool
 	ctx        context.Context
+	owner      uuid.UUID
 }
 
-func (s *fakeTraining) GetSession(ctx context.Context, id uuid.UUID) (training.Session, error) {
+func (s *fakeTraining) GetSession(ctx context.Context, owner, id uuid.UUID) (training.Session, error) {
 	s.ctx = ctx
+	s.owner = owner
 	if s.panicOnGet {
 		panic("private panic")
 	}
@@ -69,6 +71,9 @@ func (fakeProfiles) ResolveIdentity(_ context.Context, id profile.Identity) (uui
 	}
 	return uuid.Nil, profile.ErrNotFound
 }
+func (fakeProfiles) GetUser(_ context.Context, id uuid.UUID) (profile.User, error) {
+	return profile.User{ID: id, DisplayName: "Athlete"}, nil
+}
 
 func testRouter(repo *fakeTraining, p *testPinger) http.Handler {
 	return NewRouter(training.NewService(repo), profile.NewService(fakeProfiles{}), p, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
@@ -96,11 +101,11 @@ func TestInvalidRequests(t *testing.T) {
 		{"removed catalog create", "POST", "/api/v1/exercises", "{}", 404},
 		{"bad UUID", "GET", "/api/v1/sessions/nope", "", 400},
 		{"nil UUID", "GET", "/api/v1/sessions/00000000-0000-0000-0000-000000000000", "", 400},
-		{"user required", "GET", "/api/v1/sessions", "", 400},
-		{"zero limit", "GET", "/api/v1/sessions?user_id=" + id + "&limit=0", "", 400},
-		{"overflow offset", "GET", "/api/v1/plans?user_id=" + id + "&offset=99999999999999999999", "", 400},
-		{"duplicate query", "GET", "/api/v1/plans?user_id=" + id + "&limit=1&limit=2", "", 400},
-		{"unknown query", "GET", "/api/v1/plans?user_id=" + id + "&sort=name", "", 400},
+		{"owner in query", "GET", "/api/v1/sessions?user_id=" + id, "", 400},
+		{"zero limit", "GET", "/api/v1/sessions?limit=0", "", 400},
+		{"overflow offset", "GET", "/api/v1/plans?offset=99999999999999999999", "", 400},
+		{"duplicate query", "GET", "/api/v1/plans?limit=1&limit=2", "", 400},
+		{"unknown query", "GET", "/api/v1/plans?sort=name", "", 400},
 		{"comparison needs session", "GET", "/api/v1/plans/" + id + "/comparison", "", 400},
 		{"invalid JSON", "POST", "/api/v1/users", "{", 400},
 		{"empty JSON", "POST", "/api/v1/users", "", 400},
@@ -109,9 +114,13 @@ func TestInvalidRequests(t *testing.T) {
 		{"multiple JSON", "POST", "/api/v1/users", `{"display_name":"A"} {}`, 400},
 		{"privileged id", "POST", "/api/v1/users", `{"display_name":"A","id":"` + id + `"}`, 400},
 		{"blank name", "POST", "/api/v1/users", `{"display_name":" "}`, 400},
-		{"empty plan", "POST", "/api/v1/plans", `{"user_id":"` + id + `","name":"Plan","exercises":[]}`, 400},
-		{"missing metrics", "POST", "/api/v1/sessions", `{"user_id":"` + id + `","name":"Done","performed_at":"2026-09-23T08:00:00Z","exercises":[{"name":"Squat","kind":"strength"}]}`, 400},
-		{"nested privileged id", "POST", "/api/v1/plans", `{"user_id":"` + id + `","name":"Plan","exercises":[{"id":"` + id + `","name":"Run","kind":"cardio","minutes":20}]}`, 400},
+		{"owner in plan body", "POST", "/api/v1/plans", `{"user_id":"` + id + `","name":"Plan","exercises":[{"name":"Run","kind":"cardio","minutes":20}]}`, 400},
+		{"owner in session body", "POST", "/api/v1/sessions", `{"user_id":"` + id + `","name":"Done","performed_at":"2026-09-23T08:00:00Z","exercises":[{"name":"Run","kind":"cardio","minutes":20}]}`, 400},
+		{"another user's profile", "GET", "/api/v1/users/" + id, "", 404},
+		{"another user's measurements", "GET", "/api/v1/users/" + id + "/measurements", "", 404},
+		{"empty plan", "POST", "/api/v1/plans", `{"name":"Plan","exercises":[]}`, 400},
+		{"missing metrics", "POST", "/api/v1/sessions", `{"name":"Done","performed_at":"2026-09-23T08:00:00Z","exercises":[{"name":"Squat","kind":"strength"}]}`, 400},
+		{"nested privileged id", "POST", "/api/v1/plans", `{"name":"Plan","exercises":[{"id":"` + id + `","name":"Run","kind":"cardio","minutes":20}]}`, 400},
 		{"large body", "POST", "/api/v1/users", `{"display_name":"` + strings.Repeat("a", maxBodyBytes) + `"}`, 413},
 		{"unsupported method", "PATCH", "/api/v1/sessions/" + id, "{}", 405},
 	} {
@@ -236,5 +245,19 @@ func TestProviderRoutesArePublic(t *testing.T) {
 	h := NewRouter(training.NewService(&fakeTraining{}), profile.NewService(fakeProfiles{}), &testPinger{}, registeringAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
 	if w := requestAs(h, "", "POST", "/api/v1/auth/login", "{}"); w.Code != http.StatusNoContent {
 		t.Fatalf("provider route not mounted: %d", w.Code)
+	}
+}
+func TestOwnerComesFromPrincipal(t *testing.T) {
+	repo := &fakeTraining{}
+	h := testRouter(repo, &testPinger{})
+	if w := request(h, "GET", "/api/v1/sessions/"+uuid.NewString(), ""); w.Code != 200 || repo.owner != linkedUser {
+		t.Fatalf("repository saw owner %s, want the caller %s (%d)", repo.owner, linkedUser, w.Code)
+	}
+	for _, path := range []string{"/api/v1/users/me", "/api/v1/users/" + linkedUser.String()} {
+		w := request(h, "GET", path, "")
+		var user profile.User
+		if err := json.Unmarshal(w.Body.Bytes(), &user); err != nil || w.Code != 200 || user.ID != linkedUser {
+			t.Fatalf("%s: %d %s", path, w.Code, w.Body)
+		}
 	}
 }

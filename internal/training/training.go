@@ -14,6 +14,10 @@ var ErrNotFound = errors.New("session or plan not found")
 var ErrReference = errors.New("user or plan does not exist for this user")
 var ErrConflict = errors.New("record has dependent sessions")
 
+// errNoOwner means a caller reached the service without an authenticated owner:
+// a wiring bug, never a client error, so it surfaces as a 500.
+var errNoOwner = errors.New("training: owner is required")
+
 type Set struct {
 	Repetitions int      `json:"repetitions"`
 	WeightKG    *float64 `json:"weight_kg"`
@@ -35,8 +39,10 @@ type SessionExercise struct {
 	PlanExerciseID *uuid.UUID `json:"plan_exercise_id,omitempty"`
 	ExerciseInput
 }
+
+// PlanInput and SessionInput carry no owner: it always comes from the
+// authenticated caller, so a client cannot write into another user's account.
 type PlanInput struct {
-	UserID    uuid.UUID       `json:"user_id"`
 	Name      string          `json:"name"`
 	Notes     string          `json:"notes"`
 	Exercises []ExerciseInput `json:"exercises"`
@@ -51,7 +57,6 @@ type Plan struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 }
 type SessionInput struct {
-	UserID      uuid.UUID         `json:"user_id"`
 	Name        string            `json:"name"`
 	Notes       string            `json:"notes"`
 	PerformedAt time.Time         `json:"performed_at"`
@@ -59,7 +64,8 @@ type SessionInput struct {
 	Exercises   []SessionExercise `json:"exercises"`
 }
 type Session struct {
-	ID uuid.UUID `json:"id"`
+	ID     uuid.UUID `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
 	SessionInput
 	PlanSnapshot *Plan     `json:"plan_snapshot"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -100,10 +106,7 @@ func validateExercise(in *ExerciseInput) error {
 	return nil
 }
 
-func validateHeader(userID uuid.UUID, name, notes *string, count int) error {
-	if userID == uuid.Nil {
-		return validation.Invalid("user_id is required and must not be the nil UUID")
-	}
+func validateHeader(name, notes *string, count int) error {
 	if err := validation.Text("name", name, 200, true); err != nil {
 		return err
 	}
