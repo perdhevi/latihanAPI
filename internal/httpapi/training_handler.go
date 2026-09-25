@@ -2,7 +2,7 @@ package httpapi
 
 import (
 	"github.com/google/uuid"
-	"latihanApi/internal/training"
+	"github.com/perdhevi/latihanAPI/internal/training"
 	"net/http"
 )
 

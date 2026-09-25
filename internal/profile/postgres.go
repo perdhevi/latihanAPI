@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"latihanApi/internal/validation"
+	"github.com/perdhevi/latihanAPI/internal/validation"
 )
 
 type PostgresRepository struct{ pool *pgxpool.Pool }

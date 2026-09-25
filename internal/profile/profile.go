@@ -3,7 +3,7 @@ package profile
 import (
 	"errors"
 	"github.com/google/uuid"
-	"latihanApi/internal/validation"
+	"github.com/perdhevi/latihanAPI/internal/validation"
 	"time"
 )
 

@@ -1,7 +1,7 @@
 package httpapi
 
 import (
-	"latihanApi/internal/profile"
+	"github.com/perdhevi/latihanAPI/internal/profile"
 	"net/http"
 )
 

@@ -10,11 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	"latihanApi/internal/config"
-	"latihanApi/internal/database"
-	"latihanApi/internal/httpapi"
-	"latihanApi/internal/profile"
-	"latihanApi/internal/training"
+	"github.com/perdhevi/latihanAPI/internal/config"
+	"github.com/perdhevi/latihanAPI/internal/database"
+	"github.com/perdhevi/latihanAPI/internal/httpapi"
+	"github.com/perdhevi/latihanAPI/internal/profile"
+	"github.com/perdhevi/latihanAPI/internal/training"
 )
 
 func main() {

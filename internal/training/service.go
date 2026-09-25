@@ -3,7 +3,7 @@ package training
 import (
 	"context"
 	"github.com/google/uuid"
-	"latihanApi/internal/validation"
+	"github.com/perdhevi/latihanAPI/internal/validation"
 )
 
 type Repository interface {

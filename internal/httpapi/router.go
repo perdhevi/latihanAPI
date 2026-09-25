@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"latihanApi/internal/profile"
-	"latihanApi/internal/training"
+	"github.com/perdhevi/latihanAPI/internal/profile"
+	"github.com/perdhevi/latihanAPI/internal/training"
 )
 
 type Pinger interface{ Ping(context.Context) error }

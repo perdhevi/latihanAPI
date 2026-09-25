@@ -3,7 +3,7 @@ package training
 import (
 	"errors"
 	"github.com/google/uuid"
-	"latihanApi/internal/validation"
+	"github.com/perdhevi/latihanAPI/internal/validation"
 	"strings"
 	"time"
 )

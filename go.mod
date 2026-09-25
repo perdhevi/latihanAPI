@@ -1,4 +1,4 @@
-module latihanApi
+module github.com/perdhevi/latihanAPI
 
 go 1.27
 
