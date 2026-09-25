@@ -516,8 +516,8 @@ deletes backups older than `BACKUP_RETENTION_DAYS` (30). The server can write
 backups but not read them. The container turns unhealthy if no backup succeeded
 for 26 hours. `deploy/backup/restore.sh` restores in one transaction and re-applies
 the audit log's narrower privileges, which a plain restore would silently widen;
-CI proves the whole cycle on every push by backing up, destroying every volume,
-restoring and checking data and privileges. See [docs/DEPLOY.md](docs/DEPLOY.md).
+The CI smoke job proves the whole cycle each time it runs: it backs up, destroys every volume,
+restores and checks data and privileges. See [docs/DEPLOY.md](docs/DEPLOY.md).
 
 | Data | Kept for | Then |
 | --- | --- | --- |
@@ -725,10 +725,25 @@ the disaster-recovery drill and a Trivy image scan). Actions are pinned to commi
 SHAs and Dependabot updates Go modules, actions and base images weekly. Linter
 configuration lives in `.golangci.yml`.
 
-**CI currently runs only when started by hand** (Actions → CI → Run workflow).
-To run it on every push and pull request, add `push:` and `pull_request:` under
-`on:` in [.github/workflows/ci.yml](.github/workflows/ci.yml). The Release
-workflow is separate and still runs on `v*` tags.
+#### Running CI in this repository
+
+This tutorial repository starts CI **by hand** (Actions → CI → Run workflow), so
+forks and experiments don't spend Actions minutes on every push while you follow
+along. In a real project you'll want it to run automatically. Change the trigger
+in [.github/workflows/ci.yml](.github/workflows/ci.yml) to:
+
+```yaml
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+```
+
+Pull requests are the important part: that's where CI stops a bad change,
+including a Dependabot update that reintroduces a known vulnerability, before it
+reaches `master`. Until then, run the workflow by hand on a branch before merging
+it. The Release workflow is separate and runs on `v*` tags.
 
 ### Beyond example-based tests
 

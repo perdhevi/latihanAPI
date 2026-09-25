@@ -147,7 +147,8 @@ shred -u latihan-backup-key.txt
 ```
 
 The restore is one transaction: it applies completely or not at all. Rehearse it:
-CI runs the same drill (`scripts/backup-restore-test.sh`) on every push.
+The CI smoke job runs the same drill (`scripts/backup-restore-test.sh`); run it
+before every release.
 
 ## Rollback
 

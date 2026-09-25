@@ -122,6 +122,28 @@ CI now runs three jobs in parallel: **lint** (including a check that `go.mod` is
 tidy), **vulnerabilities**, and **test**. The `test` job runs the race detector
 and the integration tests against PostgreSQL.
 
+### When should CI run?
+
+A guardrail only works if it runs before a change lands. The strongest setup runs
+CI **on every pull request**, and makes a green run a condition for merging:
+
+```yaml
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch: # also allow a manual run
+```
+
+This tutorial repository ships with only `workflow_dispatch`: you start CI yourself
+from the Actions tab. That's deliberate for a repository people fork and experiment
+with, because it stops every push in every fork from using Actions minutes. It
+also moves responsibility to you: **run the workflow on a branch before you merge
+it**, Dependabot's branches included. In your own project, switch to the automatic
+triggers above. The later parts of this series add fuzzing, an end-to-end smoke
+test, a disaster-recovery drill and an image scan to this workflow, and all of them
+are only as useful as how often they run.
+
 ### 4. A small thing for Windows readers
 
 `.gitattributes` forces LF line endings. Without it, a reader on Windows checks

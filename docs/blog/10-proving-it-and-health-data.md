@@ -54,7 +54,8 @@ Between 400,000 and 7.5 million executions per target. Two real findings:
    the RFC 6750 token grammar exactly.
 
 Failing inputs are saved under `testdata/fuzz/` and replayed by plain `go test`
-forever after. CI fuzzes each target for 15 seconds on every push.
+forever after. The CI `fuzz` job gives each target 15 seconds whenever the
+workflow runs.
 
 ### Contract tests: does the documentation tell the truth?
 
@@ -213,7 +214,7 @@ The fix makes the privileges one source of truth: a database function,
 } | psql -h postgres -U latihan_migrator -d latihan --single-transaction -v ON_ERROR_STOP=1
 ```
 
-The drill now passes end to end, on every push.
+The drill now passes end to end, and the CI `smoke` job repeats it on every run.
 
 ### How long each kind of data lives
 
