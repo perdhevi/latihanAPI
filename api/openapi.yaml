@@ -1,8 +1,8 @@
 openapi: "3.0.3"
 info:
   title: "latihanApi"
-  version: "0.4.0"
-  description: "Personal sessions, plans, profiles and measurement history. /exercises has been removed. Every /api/v1 operation requires a bearer token from the configured provider. POST /api/v1/users links the caller's identity to a new profile; other operations require that profile. Callers only ever see and change their own records: owners come from the token, never from input, and other users' records return 404. All responses include X-Request-ID. Input bodies are limited to 1 MiB; unknown JSON fields, unknown/repeated query parameters and multiple JSON values are rejected. Strings are trimmed. PUT fully replaces editable fields; no upserts. UUIDs and creation timestamps are server-managed. HTTP method errors use the same Error schema."
+  version: "0.5.0"
+  description: "Personal sessions, plans, profiles and measurement history. /exercises has been removed. Every /api/v1 operation except /api/v1/auth/* requires a bearer token from the configured provider. The /api/v1/auth endpoints and /.well-known/jwks.json exist only with the built-in jwt provider. POST /api/v1/users links the caller's identity to a new profile; other operations require that profile. Callers only ever see and change their own records: owners come from the token, never from input, and other users' records return 404. All responses include X-Request-ID. Input bodies are limited to 1 MiB; unknown JSON fields, unknown/repeated query parameters and multiple JSON values are rejected. Strings are trimmed. PUT fully replaces editable fields; no upserts. UUIDs and creation timestamps are server-managed. HTTP method errors use the same Error schema."
 servers:
   -
     url: "http://localhost:8080"
@@ -11,6 +11,8 @@ security:
 tags:
   -
     name: "Health"
+  -
+    name: "Auth"
   -
     name: "Sessions"
   -
@@ -1075,6 +1077,119 @@ paths:
             "application/json":
               schema:
                 "$ref": "#/components/schemas/Error"
+  "/api/v1/auth/register":
+    post:
+      operationId: "register"
+      tags:
+        - "Auth"
+      summary: "Create a built-in account (AUTH_PROVIDER=jwt only)"
+      description: "Returns tokens for the new account. Create the profile afterwards with POST /api/v1/users."
+      security: []
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/Credentials"
+      responses:
+        "201":
+          "$ref": "#/components/responses/Tokens"
+        "400":
+          description: "Invalid email, password length or body."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "409":
+          description: "An account with this email already exists."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/auth/login":
+    post:
+      operationId: "login"
+      tags:
+        - "Auth"
+      summary: "Exchange email and password for tokens (AUTH_PROVIDER=jwt only)"
+      description: "Unknown emails, wrong passwords and locked accounts get the same 401. Five consecutive failures lock the account for 15 minutes."
+      security: []
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/Credentials"
+      responses:
+        "200":
+          "$ref": "#/components/responses/Tokens"
+        "401":
+          description: "invalid_credentials"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/auth/refresh":
+    post:
+      operationId: "refresh"
+      tags:
+        - "Auth"
+      summary: "Rotate a refresh token (AUTH_PROVIDER=jwt only)"
+      description: "Each refresh token works once. Presenting a used one revokes every token of that session."
+      security: []
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          "$ref": "#/components/responses/Tokens"
+        "401":
+          description: "invalid_refresh_token: unknown, expired, revoked or reused."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/auth/logout":
+    post:
+      operationId: "logout"
+      tags:
+        - "Auth"
+      summary: "Revoke a session's refresh tokens (AUTH_PROVIDER=jwt only)"
+      description: "Always 204. Access tokens already issued stay valid until they expire."
+      security: []
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/RefreshRequest"
+      responses:
+        "204":
+          description: "Revoked, or nothing to revoke"
+  "/.well-known/jwks.json":
+    get:
+      operationId: "jwks"
+      tags:
+        - "Auth"
+      summary: "Public keys that verify this service's access tokens (AUTH_PROVIDER=jwt only)"
+      security: []
+      responses:
+        "200":
+          description: "JSON Web Key Set"
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "keys"
+                properties:
+                  keys:
+                    type: "array"
+                    items:
+                      type: "object"
 components:
   securitySchemes:
     bearerAuth:
@@ -1083,6 +1198,12 @@ components:
       bearerFormat: "JWT"
       description: "Token from the configured AUTH_PROVIDER (Firebase ID token, Cognito access or ID token, or OIDC access token)."
   responses:
+    Tokens:
+      description: "Token pair. Sent with Cache-Control: no-store."
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/TokenResponse"
     Unauthorized:
       description: "Missing or invalid bearer token. WWW-Authenticate describes the challenge."
       headers:
@@ -1106,6 +1227,51 @@ components:
           schema:
             "$ref": "#/components/schemas/Error"
   schemas:
+    Credentials:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "email"
+        - "password"
+      properties:
+        email:
+          type: "string"
+          maxLength: 254
+          description: "Plain address; case-insensitive"
+        password:
+          type: "string"
+          minLength: 12
+          maxLength: 128
+    RefreshRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "refresh_token"
+      properties:
+        refresh_token:
+          type: "string"
+    TokenResponse:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "access_token"
+        - "token_type"
+        - "expires_in"
+        - "refresh_token"
+      properties:
+        access_token:
+          type: "string"
+          description: "EdDSA-signed JWT"
+        token_type:
+          type: "string"
+          enum:
+            - "Bearer"
+        expires_in:
+          type: "integer"
+          description: "Access token lifetime in seconds"
+        refresh_token:
+          type: "string"
+          description: "Opaque, single use"
     Set:
       type: "object"
       additionalProperties: false

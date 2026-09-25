@@ -15,9 +15,9 @@ subscriptions, billing, coaches, bookings, tenant management, entitlements, and
 advertising remain outside this repository. Cloud/offline synchronization is not
 implemented yet.
 
-Every `/api/v1` request needs a bearer token from a pluggable provider: Firebase,
-Amazon Cognito or any OpenID Connect issuer, chosen in `.env` with no code changes
-(see [Authentication](#authentication)).
+Every `/api/v1` request needs a bearer token from a pluggable provider chosen in
+`.env` with no code changes: the built-in email and password accounts, Firebase,
+Amazon Cognito or any OpenID Connect issuer (see [Authentication](#authentication)).
 
 Callers only ever see and change their own records. The owner of every record comes
 from the verified token, never from request input, and another user's records answer
@@ -49,15 +49,15 @@ Prerequisites: Docker Engine/Desktop with Compose v2, ports 8080 and 5432 availa
 
 ```sh
 cp .env.example .env
-# edit .env: uncomment one AUTH_PROVIDER block and fill in its values
 docker compose up --build
 ```
 
-Use `Copy-Item .env.example .env` on PowerShell. The API refuses to start until
-`AUTH_PROVIDER` is set, and it checks the provider's settings and downloads its
-signing keys before anything else, so mistakes show up in the first log line.
-Compose starts PostgreSQL 17,
-waits for its health check, applies migrations, and starts the non-root API.
+Use `Copy-Item .env.example .env` on PowerShell. The example uses the built-in
+`jwt` provider, so nothing else is needed. Compose starts PostgreSQL 17, waits for
+its health check, applies migrations, creates a signing key in the `jwt-keys` volume
+on first start (and keeps it afterwards), and starts the non-root API. The API
+refuses to start without a valid `AUTH_PROVIDER`; the provider's settings and
+keys are checked before the server accepts any request.
 The API also retries database connectivity for up to 30 seconds at startup.
 The `latihan` database/user/password values are **local development credentials**.
 
@@ -69,6 +69,19 @@ curl http://localhost:8080/ready
 Both return `{"status":"ok"}`. Readiness returns 503 on database connectivity
 failure; liveness does not query PostgreSQL. Readiness checks connectivity, while
 the migration job establishes schema readiness.
+
+Create an account and keep its access token (valid for 15 minutes; use the
+`refresh_token` to get a new one):
+
+```sh
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"alex@example.com","password":"correct horse battery staple"}' \
+  | sed -E 's/.*"access_token":"([^"]+)".*/\1/')
+```
+
+Then create your profile and use the API with `-H "Authorization: Bearer $TOKEN"`,
+as shown in [Profile → plan → session](#profile--plan--session).
 
 Optional development data (one user, plan, session, and measurement):
 
@@ -107,12 +120,14 @@ curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/sessions'
 
 ## Authentication
 
-The API never handles passwords. A provider signs a token for the client (the
-Flutter app signs in with the provider's SDK), and the API verifies that token's
-signature, issuer, audience and lifetime on every request.
+A provider signs a token for the client, and the API verifies that token's
+signature, issuer, audience and lifetime on every request. With an external
+provider the API never sees a password: the Flutter app signs in with the
+provider's SDK. The built-in `jwt` provider is its own identity provider.
 
 | `AUTH_PROVIDER` | Settings | Token the client sends |
 | --- | --- | --- |
+| `jwt` | `AUTH_JWT_ISSUER`, `AUTH_JWT_KEY_FILE`, optional `AUTH_JWT_PREVIOUS_KEY_FILES`, `AUTH_JWT_AUDIENCE`, `AUTH_JWT_ACCESS_TTL`, `AUTH_JWT_REFRESH_TTL` | Access token from `/api/v1/auth/login` (see [Built-in accounts](#built-in-accounts)) |
 | `firebase` | `AUTH_FIREBASE_PROJECT_ID` | Firebase ID token (`getIdToken()`) |
 | `cognito` | `AUTH_COGNITO_REGION`, `AUTH_COGNITO_USER_POOL_ID`, `AUTH_COGNITO_CLIENT_ID`, `AUTH_COGNITO_TOKEN_USE` (`access` or `id`) | Cognito access token (or ID token if configured) |
 | `oidc` | `AUTH_OIDC_ISSUER`, `AUTH_OIDC_AUDIENCE`, optional `AUTH_OIDC_JWKS_URL`, `AUTH_OIDC_ALGORITHMS` | Access token from Keycloak, Auth0, Zitadel or another OIDC issuer |
@@ -137,6 +152,58 @@ good keys keep working. `/health` and `/ready` need no token.
 Identities live in `user_identities (issuer, subject) → user_id`. A user can have
 several identities, so moving to another provider means linking the new identity
 to the existing user rather than migrating data. Deleting a user deletes its links.
+
+### Built-in accounts
+
+`AUTH_PROVIDER=jwt` keeps email and password accounts in this service's database
+(migration `000004_create_local_auth`) and signs its own tokens. Like an external
+provider's accounts, they are separate from profiles: register or log in first,
+then create the profile with `POST /api/v1/users`.
+
+| Endpoint | Body | Result |
+| --- | --- | --- |
+| `POST /api/v1/auth/register` | `{"email","password"}` | 201 with tokens; 409 `email_taken` |
+| `POST /api/v1/auth/login` | `{"email","password"}` | 200 with tokens; 401 `invalid_credentials` |
+| `POST /api/v1/auth/refresh` | `{"refresh_token"}` | 200 with a new token pair; 401 `invalid_refresh_token` |
+| `POST /api/v1/auth/logout` | `{"refresh_token"}` | 204, always |
+| `GET /.well-known/jwks.json` | | The public signing keys |
+
+Tokens come back as `{"access_token","token_type":"Bearer","expires_in","refresh_token"}`
+with `Cache-Control: no-store`. How it is hardened:
+
+- **Tokens.** Access tokens are EdDSA (Ed25519) JWTs, valid for 15 minutes and
+  verified by the same code as external providers' tokens. Refresh tokens are 256
+  random bits, stored only as SHA-256 hashes, valid for 30 days, and replaced on
+  every use.
+- **Stolen refresh tokens.** Presenting a refresh token that was already used
+  revokes its whole session family, so whichever of the thief or the user refreshes
+  second is logged out and the theft is logged. Two refreshes racing with one token
+  count as reuse too. Logout revokes the family; access tokens already issued remain
+  valid until they expire.
+- **Passwords.** 12 to 128 characters, no composition rules (NIST SP 800-63B).
+  Hashed with argon2id (19 MiB, 2 passes) and at most four hashes run at once, so a
+  burst of logins queues instead of exhausting memory. Stored hashes with older
+  parameters are upgraded at the next login.
+- **Guessing and enumeration.** Unknown emails, wrong passwords and locked accounts
+  get the same answer after the same hashing work. Five consecutive failures lock
+  the account for 15 minutes. Registration does reveal that an email is taken
+  (409); hiding that needs an email-verification step this provider does not have.
+- **Keys.** The signing key is an Ed25519 PEM file; its key ID is the RFC 7638
+  thumbprint. `api keygen -out FILE` creates one and never overwrites (Compose runs
+  it for you; locally, `make keygen`). To rotate, create a new key, make it
+  `AUTH_JWT_KEY_FILE`, list the old one in `AUTH_JWT_PREVIOUS_KEY_FILES`, restart,
+  and drop the old key once `AUTH_JWT_ACCESS_TTL` has passed.
+
+Not included: email verification, password reset and account deletion. They need
+outbound email and are good reasons to pick an external provider instead.
+
+### Moving between providers
+
+`AUTH_PROVIDER` accepts a comma-separated list, such as `firebase,jwt`. Each token
+goes to the provider whose issuer matches its `iss` claim; that claim only selects
+the verifier, which then checks everything. Link each user's new identity to the
+existing profile in `user_identities`, run both providers while clients move over,
+then remove the old one.
 
 ### Adding another provider
 
@@ -309,13 +376,15 @@ with pagination; it does not overwrite or merge previous measurements.
 ## Local Go development
 
 Prerequisites: Go 1.27+, PostgreSQL 17 (or Docker), optionally GNU Make and `psql`.
-Runtime dependencies remain `pgx/v5` and `google/uuid`. `golang-migrate` is a separate
+Runtime dependencies are `pgx/v5`, `google/uuid`, `golang-jwt/jwt/v5` (token
+parsing) and `golang.org/x/crypto` (argon2id). `golang-migrate` is a separate
 pinned CLI for versioned migrations. No ORM or server code generator is used.
 
 ```sh
 cp .env.example .env
 docker compose up -d postgres
 make migrate-up
+make keygen   # signing key for AUTH_PROVIDER=jwt
 make run
 ```
 
@@ -328,7 +397,7 @@ the log level and `AUTH_*` settings come from `.env`.
 | `HTTP_ADDR` | `:8080` | Listener |
 | `DATABASE_URL` | Required | PostgreSQL connection URL |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
-| `AUTH_PROVIDER` | Required | `firebase`, `cognito` or `oidc`; see [Authentication](#authentication) and `.env.example` |
+| `AUTH_PROVIDER` | Required | `jwt`, `firebase`, `cognito`, `oidc`, or a comma-separated list; see [Authentication](#authentication) and `.env.example` |
 | `AUTH_*` | Provider-specific | Settings for the selected provider |
 | `TEST_DATABASE_URL` | Required for integration tests | Disposable test database |
 
@@ -355,7 +424,9 @@ auth/authtest      conformance suite for JWT-based providers
 internal/httpapi   REST routing, transport, middleware
 internal/validation shared text/numeric/pagination validation
 internal/database  PostgreSQL pool and bounded startup retry
-internal/authn     built-in providers: jwks (shared verifier), firebase, cognito, oidc
+internal/authn     built-in providers: jwks (shared verifier), local (jwt), firebase,
+                   cognito, oidc
+internal/httpjson  JSON request/response conventions shared with providers
 internal/config    environment configuration
 internal/testdb    integration-test schema setup (integration build tag only)
 migrations         reversible versioned SQL
@@ -396,7 +467,8 @@ The integration tag fails if its database URL is missing. Tests cover CRUD,
 ownership constraints, stable plan snapshots, plan changes/detachment, comparison
 metrics, missing/unplanned exercises, history ordering, pagination, cancellation,
 deletion conflicts, migration rollback/reapplication, identity linking, the 401/403/409/503
-authentication responses, and cross-user access: an intruder holding every ID of
+authentication responses, the built-in provider end to end (register, profile,
+refresh, reuse detection, logout; concurrent refreshes of one token), and cross-user access: an intruder holding every ID of
 another user's records gets 404 on every route and the records stay unchanged. Every built-in provider also runs the
 `auth/authtest` conformance suite against a fake TLS identity provider.
 
@@ -407,9 +479,10 @@ integration tests, build, Compose validation, Docker build). Actions are pinned 
 commit SHAs and Dependabot updates Go modules, actions and base images weekly.
 Linter configuration lives in `.golangci.yml`.
 
-Make targets: `run`, `build`, `test`, `fmt`, `vet`, `lint`, `vuln`, `check`,
+Make targets: `run`, `build`, `test`, `fmt`, `vet`, `lint`, `vuln`, `check`, `keygen`,
 `test-integration`, `seed`, `migrate-up`, `migrate-down`, `docker-up`, `docker-down`.
 `make seed` requires `psql`. `make migrate-down` rolls back one migration and
-**deletes that migration's data**: currently sessions, plans, measurements, and
-profiles. The previous exercise catalog remains until its own migration is rolled
-back. Inspect migration failures before repairing; never blindly force a dirty version.
+**deletes that migration's data**: the newest one holds the built-in provider's
+accounts and refresh tokens; earlier ones hold identity links, then sessions, plans,
+measurements and profiles. The exercise catalog remains until its own migration is
+rolled back. Inspect migration failures before repairing; never blindly force a dirty version.

@@ -2,6 +2,8 @@ package main
 
 // Authentication providers compiled into this binary. AUTH_PROVIDER selects
 // one of them at startup; remove an import to drop a provider you do not use.
+// (The built-in jwt provider stays registered either way: main uses it for the
+// keygen command.)
 //
 // To add a provider from another repository:
 //
@@ -11,5 +13,6 @@ package main
 import (
 	_ "github.com/perdhevi/latihanAPI/internal/authn/cognito"
 	_ "github.com/perdhevi/latihanAPI/internal/authn/firebase"
+	_ "github.com/perdhevi/latihanAPI/internal/authn/local"
 	_ "github.com/perdhevi/latihanAPI/internal/authn/oidc"
 )

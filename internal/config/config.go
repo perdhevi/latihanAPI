@@ -29,7 +29,7 @@ func Load() (Config, error) {
 		return Config{}, errors.New("DATABASE_URL is required")
 	}
 	if c.AuthProvider == "" {
-		return Config{}, errors.New("AUTH_PROVIDER is required (for example firebase, cognito or oidc)")
+		return Config{}, errors.New("AUTH_PROVIDER is required (for example jwt, firebase, cognito or oidc)")
 	}
 	if level := os.Getenv("LOG_LEVEL"); level != "" {
 		if err := c.LogLevel.UnmarshalText([]byte(level)); err != nil {

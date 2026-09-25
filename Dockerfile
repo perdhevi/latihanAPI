@@ -9,7 +9,9 @@ COPY internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api
 
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates && addgroup -S app && adduser -S -G app app
+# /keys belongs to the app user so a new Docker volume mounted there is writable
+# by the keygen job (Docker copies the ownership into empty named volumes).
+RUN apk add --no-cache ca-certificates && addgroup -S app && adduser -S -G app app \n    && install -d -o app -g app -m 0700 /keys
 COPY --from=build /out/api /usr/local/bin/api
 USER app:app
 EXPOSE 8080
