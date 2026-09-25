@@ -22,11 +22,12 @@ type Config struct {
 	AuthProvider string
 
 	// Abuse limits; every one has a default so a fresh deployment is protected.
-	RateLimitIP    ratelimit.Policy
-	RateLimitUser  ratelimit.Policy
-	RateLimitAuth  ratelimit.Policy
-	MaxInFlight    int
-	TrustedProxies []netip.Prefix
+	RateLimitIP     ratelimit.Policy
+	RateLimitUser   ratelimit.Policy
+	RateLimitAuth   ratelimit.Policy
+	RateLimitExport ratelimit.Policy
+	MaxInFlight     int
+	TrustedProxies  []netip.Prefix
 
 	DBMaxConns         int32
 	DBStatementTimeout time.Duration
@@ -36,6 +37,11 @@ type Config struct {
 
 	// Env reads further settings (for auth providers), with X_FILE support.
 	Env *Env
+
+	// AuditRetention is how long audit events are kept (at least 30 days).
+	AuditRetention time.Duration
+	// TruncateClientIP logs only the network part of client addresses.
+	TruncateClientIP bool
 
 	// AdminAddr serves /metrics (and optionally pprof). Never publish it.
 	AdminAddr  string
@@ -90,6 +96,7 @@ func load(env *Env) (Config, error) {
 		{"RATE_LIMIT_IP", "50/s:100", &c.RateLimitIP},
 		{"RATE_LIMIT_USER", "10/s:30", &c.RateLimitUser},
 		{"RATE_LIMIT_AUTH", "10/m:10", &c.RateLimitAuth},
+		{"RATE_LIMIT_EXPORT", "4/h:2", &c.RateLimitExport},
 	} {
 		if *p.dst, err = ratelimit.ParsePolicy(getenv(p.name, p.fallback)); err != nil {
 			return Config{}, fmt.Errorf("%s: %w", p.name, err)
@@ -114,6 +121,16 @@ func load(env *Env) (Config, error) {
 		if c.AdminPprof, err = strconv.ParseBool(raw); err != nil {
 			return Config{}, errors.New("ADMIN_PPROF must be true or false")
 		}
+	}
+	if c.AuditRetention, err = time.ParseDuration(getenv("AUDIT_RETENTION", "8760h")); err != nil || c.AuditRetention < 30*24*time.Hour {
+		return Config{}, errors.New("AUDIT_RETENTION must be a duration of at least 720h (30 days)")
+	}
+	switch getenv("LOG_CLIENT_IP", "full") {
+	case "full":
+	case "truncated":
+		c.TruncateClientIP = true
+	default:
+		return Config{}, errors.New("LOG_CLIENT_IP must be full or truncated")
 	}
 	if raw := env.Get("REQUIRE_IF_MATCH"); raw != "" {
 		if c.RequireIfMatch, err = strconv.ParseBool(raw); err != nil {

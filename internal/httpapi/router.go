@@ -18,7 +18,7 @@ type Pinger interface{ Ping(context.Context) error }
 // registers itself (such as login) are public.
 func NewRouter(sessions *training.Service, profiles *profile.Service, db Pinger, authenticator auth.Authenticator, logger *slog.Logger, opts Options) http.Handler {
 	l := newLimits(opts)
-	h := &handlers{training: sessions, profiles: profiles, auth: authenticator, logger: logger, limits: l, requireIfMatch: opts.RequireIfMatch, idempotency: opts.Idempotency, metrics: opts.Metrics}
+	h := &handlers{training: sessions, profiles: profiles, auth: authenticator, logger: logger, limits: l, requireIfMatch: opts.RequireIfMatch, idempotency: opts.Idempotency, metrics: opts.Metrics, account: opts.Account}
 	mux := http.NewServeMux()
 	// Provider routes get their own mux so the stricter public limit can be
 	// applied to exactly the routes the provider mounted.
@@ -49,6 +49,10 @@ func NewRouter(sessions *training.Service, profiles *profile.Service, db Pinger,
 	mux.HandleFunc("PUT /api/v1/plans/{id}", h.withUser(h.updatePlan))
 	mux.HandleFunc("DELETE /api/v1/plans/{id}", h.withUser(h.deletePlan))
 	mux.HandleFunc("GET /api/v1/plans/{id}/comparison", h.withUser(h.comparison))
+	if h.account != nil {
+		mux.HandleFunc("GET /api/v1/account/export", h.withUser(h.exportAccount))
+		mux.HandleFunc("DELETE /api/v1/account", h.authenticated(h.eraseAccount))
+	}
 	mux.HandleFunc("POST /api/v1/users", h.authenticated(h.idempotent(h.createUser)))
 	mux.HandleFunc("GET /api/v1/users/{userID}", h.withUser(h.getUser))
 	mux.HandleFunc("PUT /api/v1/users/{userID}", h.withUser(h.updateUser))
@@ -67,6 +71,8 @@ func NewRouter(sessions *training.Service, profiles *profile.Service, db Pinger,
 		"/api/v1/users":                 "POST", "/api/v1/users/{userID}": "GET, HEAD, PUT, DELETE",
 		"/api/v1/users/{userID}/measurements":      "GET, HEAD, POST",
 		"/api/v1/users/{userID}/measurements/{id}": "GET, HEAD, PUT, DELETE",
+		"/api/v1/account/export":                   "GET, HEAD",
+		"/api/v1/account":                          "DELETE",
 	} {
 		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Allow", allow)

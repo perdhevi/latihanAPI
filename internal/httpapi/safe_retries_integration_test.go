@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/perdhevi/latihanAPI/internal/account"
 	"github.com/perdhevi/latihanAPI/internal/idempotency"
 	"github.com/perdhevi/latihanAPI/internal/profile"
 	"github.com/perdhevi/latihanAPI/internal/testdb"
@@ -24,6 +25,7 @@ import (
 
 func safeRouter(t *testing.T, pool *pgxpool.Pool, opts Options) http.Handler {
 	opts.Idempotency = idempotency.NewStore(pool)
+	opts.Account = account.NewStore(pool)
 	return contract(t, NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), opts))
 }
 

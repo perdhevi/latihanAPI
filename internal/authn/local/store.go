@@ -48,6 +48,9 @@ type store interface {
 	// next.familyID are filled in from the consumed token.
 	rotateRefreshToken(ctx context.Context, oldHash []byte, now time.Time, next refreshToken) (uuid.UUID, error)
 	revokeFamily(ctx context.Context, hash []byte, now time.Time) error
+	// deleteCredential removes an account and its refresh tokens; a missing
+	// account is not an error.
+	deleteCredential(ctx context.Context, id uuid.UUID) error
 }
 
 type sqlStore struct{ db *sql.DB }
@@ -145,5 +148,10 @@ func (s *sqlStore) rotateRefreshToken(ctx context.Context, oldHash []byte, now t
 func (s *sqlStore) revokeFamily(ctx context.Context, hash []byte, now time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE refresh_tokens SET revoked_at=$2
 		WHERE family_id=(SELECT family_id FROM refresh_tokens WHERE token_hash=$1) AND revoked_at IS NULL`, hash, now)
+	return err
+}
+
+func (s *sqlStore) deleteCredential(ctx context.Context, id uuid.UUID) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM local_credentials WHERE id=$1`, id)
 	return err
 }

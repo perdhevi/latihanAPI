@@ -68,6 +68,14 @@ func (m *multi) Authenticate(r *http.Request) (Identity, error) {
 	return a.Authenticate(r)
 }
 
+// EraseAccount asks the member that issued id to delete the account, if it keeps one.
+func (m *multi) EraseAccount(ctx context.Context, id Identity) error {
+	if eraser, ok := m.byIssuer[id.Issuer].(AccountEraser); ok {
+		return eraser.EraseAccount(ctx, id)
+	}
+	return nil
+}
+
 // RegisterRoutes mounts the endpoints of every member that serves any.
 func (m *multi) RegisterRoutes(mux *http.ServeMux) {
 	for _, a := range m.members {

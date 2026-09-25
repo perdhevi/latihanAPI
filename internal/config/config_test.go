@@ -60,6 +60,9 @@ func TestAbuseSettings(t *testing.T) {
 		"DB_STATEMENT_TIMEOUT": "2h",
 		"ADMIN_ADDR":           ":8080",
 		"ADMIN_PPROF":          "maybe",
+		"AUDIT_RETENTION":      "24h",
+		"LOG_CLIENT_IP":        "hashed",
+		"RATE_LIMIT_EXPORT":    "lots",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv(name, value)

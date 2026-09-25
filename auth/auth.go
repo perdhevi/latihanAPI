@@ -56,6 +56,15 @@ type IssuerBound interface {
 	Issuer() string
 }
 
+// AccountEraser is implemented by providers that keep accounts themselves, such
+// as the built-in provider. When a user erases their data, the service erases
+// its own records first, then asks the provider to delete the account behind
+// the identity. It must succeed when the account is already gone. Accounts at
+// external identity providers (Firebase, Cognito) are the client's to delete.
+type AccountEraser interface {
+	EraseAccount(ctx context.Context, id Identity) error
+}
+
 // RouteRegistrar is implemented by providers that serve their own endpoints,
 // such as login or key publication. The service mounts them without
 // authentication; the provider is responsible for protecting them.

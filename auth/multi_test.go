@@ -67,3 +67,31 @@ func TestMultiProvider(t *testing.T) {
 		}
 	}
 }
+
+type erasingAuth struct {
+	issuerAuth
+	erased *[]string
+}
+
+func (a erasingAuth) EraseAccount(_ context.Context, id Identity) error {
+	*a.erased = append(*a.erased, a.issuer+" "+id.Subject)
+	return nil
+}
+
+func TestMultiProviderErasure(t *testing.T) {
+	var erased []string
+	Register("erase-a", func(context.Context, Deps) (Authenticator, error) {
+		return erasingAuth{issuerAuth{"https://erase-a.example"}, &erased}, nil
+	})
+	Register("erase-b", func(context.Context, Deps) (Authenticator, error) { return issuerAuth{"https://erase-b.example"}, nil })
+	m, err := New(t.Context(), "erase-a,erase-b", Deps{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eraser := m.(AccountEraser)
+	_ = eraser.EraseAccount(t.Context(), Identity{Issuer: "https://erase-b.example", Subject: "x"}) // keeps no accounts
+	_ = eraser.EraseAccount(t.Context(), Identity{Issuer: "https://erase-a.example", Subject: "y"})
+	if len(erased) != 1 || erased[0] != "https://erase-a.example y" {
+		t.Fatalf("erasure routed to %v", erased)
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/perdhevi/latihanAPI/auth"
+	"github.com/perdhevi/latihanAPI/internal/account"
 	"github.com/perdhevi/latihanAPI/internal/authn/local"
 	"github.com/perdhevi/latihanAPI/internal/profile"
 	"github.com/perdhevi/latihanAPI/internal/testdb"
@@ -35,7 +36,7 @@ func TestBuiltInProviderEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := contract(t, NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, provider, logger, Options{}))
+	h := contract(t, NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, provider, logger, Options{Account: account.NewStore(pool)}))
 
 	type tokens struct {
 		AccessToken  string `json:"access_token"`
@@ -91,4 +92,12 @@ func TestBuiltInProviderEndToEnd(t *testing.T) {
 	if w := requestAs(h, "", http.MethodGet, "/api/v1/auth/login", ""); w.Code != http.StatusMethodNotAllowed || w.Header().Get("Allow") != "POST" {
 		t.Fatalf("wrong method on auth route: %d", w.Code)
 	}
+
+	// Erasure removes the login too: the password stops working and the email is free again.
+	var last tokens
+	post("/api/v1/auth/login", map[string]string{"email": "alex@example.com", "password": "correct horse battery staple"}, 200, &last)
+	withToken(last.AccessToken, "DELETE", "/api/v1/account", nil, 204)
+	post("/api/v1/auth/login", map[string]string{"email": "alex@example.com", "password": "correct horse battery staple"}, 401, nil)
+	post("/api/v1/auth/refresh", map[string]string{"refresh_token": last.RefreshToken}, 401, nil)
+	post("/api/v1/auth/register", map[string]string{"email": "alex@example.com", "password": "correct horse battery staple"}, 201, nil)
 }

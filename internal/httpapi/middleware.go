@@ -116,7 +116,7 @@ func middleware(next http.Handler, logger *slog.Logger, l *limits, metrics *tele
 			}
 			duration := time.Since(start)
 			metrics.ObserveRequest(route, r.Method, status, duration.Seconds())
-			attrs := []any{"request_id", id, "client_ip", client.String(), "method", r.Method, "path", r.URL.Path, "status", status, "duration", duration}
+			attrs := []any{"request_id", id, "client_ip", l.loggedIP(client), "method", r.Method, "path", r.URL.Path, "status", status, "duration", duration}
 			if info.userID != uuid.Nil {
 				attrs = append(attrs, "user_id", info.userID.String())
 			}

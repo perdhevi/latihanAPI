@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/perdhevi/latihanAPI/auth"
+	"github.com/perdhevi/latihanAPI/internal/account"
 	"github.com/perdhevi/latihanAPI/internal/authn/local"
 	"github.com/perdhevi/latihanAPI/internal/config"
 	"github.com/perdhevi/latihanAPI/internal/database"
@@ -98,11 +99,13 @@ func run() error {
 	sessions := training.NewService(training.NewPostgresRepository(pool))
 	profiles := profile.NewService(profile.NewPostgresRepository(pool))
 	keys := idempotency.NewStore(pool)
-	go purgeExpiredKeys(ctx, keys, logger)
+	accounts := account.NewStore(pool)
+	go purgeExpired(ctx, keys, accounts, cfg.AuditRetention, logger)
 	server := newServer(cfg.HTTPAddr, httpapi.NewRouter(sessions, profiles, pool, authenticator, logger, httpapi.Options{
 		PerIP: cfg.RateLimitIP, PerUser: cfg.RateLimitUser, Public: cfg.RateLimitAuth,
 		MaxInFlight: cfg.MaxInFlight, TrustedProxies: cfg.TrustedProxies, RequireIfMatch: cfg.RequireIfMatch,
 		Idempotency: keys, Metrics: metrics,
+		Account: accounts, Export: cfg.RateLimitExport, TruncateClientIP: cfg.TruncateClientIP,
 	}))
 	admin := newAdminServer(cfg.AdminAddr, metrics, cfg.AdminPprof)
 	errCh := make(chan error, 2)
@@ -167,9 +170,10 @@ func newServer(addr string, handler http.Handler) *http.Server {
 	}
 }
 
-// purgeExpiredKeys deletes idempotency keys past their TTL every hour until
-// ctx ends at shutdown.
-func purgeExpiredKeys(ctx context.Context, keys *idempotency.Store, logger *slog.Logger) {
+// purgeExpired deletes data past its retention every hour until ctx ends at
+// shutdown: idempotency keys (24 hours, with their stored responses) and audit
+// events (auditRetention).
+func purgeExpired(ctx context.Context, keys *idempotency.Store, accounts *account.Store, auditRetention time.Duration, logger *slog.Logger) {
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 	for {
@@ -181,6 +185,11 @@ func purgeExpiredKeys(ctx context.Context, keys *idempotency.Store, logger *slog
 				logger.WarnContext(ctx, "purging idempotency keys failed", "error", err)
 			} else if n > 0 {
 				logger.InfoContext(ctx, "purged idempotency keys", "count", n)
+			}
+			if n, err := accounts.PurgeAudit(ctx, auditRetention); err != nil {
+				logger.WarnContext(ctx, "purging audit events failed", "error", err)
+			} else if n > 0 {
+				logger.InfoContext(ctx, "purged audit events", "count", n)
 			}
 		}
 	}

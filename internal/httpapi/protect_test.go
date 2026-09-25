@@ -165,3 +165,16 @@ func TestResponsesAreNotCacheableAndLogClient(t *testing.T) {
 		t.Fatalf("client address not logged: %s", logs.String())
 	}
 }
+
+func TestLoggedIPTruncation(t *testing.T) {
+	full, truncated := newLimits(Options{}), newLimits(Options{TruncateClientIP: true})
+	for addr, want := range map[string]string{"203.0.113.77": "203.0.113.0/24", "2001:db8:1:2:3:4:5:6": "2001:db8:1::/48"} {
+		a := netip.MustParseAddr(addr)
+		if got := full.loggedIP(a); got != addr {
+			t.Errorf("full: %s", got)
+		}
+		if got := truncated.loggedIP(a); got != want {
+			t.Errorf("truncated %s: %s, want %s", addr, got, want)
+		}
+	}
+}

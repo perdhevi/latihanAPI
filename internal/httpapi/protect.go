@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/perdhevi/latihanAPI/internal/account"
 	"github.com/perdhevi/latihanAPI/internal/idempotency"
 	"github.com/perdhevi/latihanAPI/internal/ratelimit"
 	"github.com/perdhevi/latihanAPI/internal/telemetry"
@@ -37,20 +38,30 @@ type Options struct {
 	Idempotency *idempotency.Store
 	// Metrics records request, rejection and auth metrics. Nil disables them.
 	Metrics *telemetry.Metrics
+	// Account enables data export and erasure (/api/v1/account). Nil disables them.
+	Account *account.Store
+	// Export limits data exports per user; each reads all of the user's data.
+	Export ratelimit.Policy
+	// TruncateClientIP logs /24 (IPv4) or /48 (IPv6) networks instead of
+	// addresses. Rate limiting always uses the full address.
+	TruncateClientIP bool
 }
 
 type limits struct {
-	perIP, perUser, public *ratelimit.Limiter
-	inFlight               chan struct{}
-	trusted                []netip.Prefix
+	perIP, perUser, public, export *ratelimit.Limiter
+	inFlight                       chan struct{}
+	trusted                        []netip.Prefix
+	truncateIP                     bool
 }
 
 func newLimits(o Options) *limits {
 	l := &limits{
-		perIP:   ratelimit.New(o.PerIP),
-		perUser: ratelimit.New(o.PerUser),
-		public:  ratelimit.New(o.Public),
-		trusted: o.TrustedProxies,
+		perIP:      ratelimit.New(o.PerIP),
+		perUser:    ratelimit.New(o.PerUser),
+		public:     ratelimit.New(o.Public),
+		export:     ratelimit.New(o.Export),
+		trusted:    o.TrustedProxies,
+		truncateIP: o.TruncateClientIP,
 	}
 	if o.MaxInFlight > 0 {
 		l.inFlight = make(chan struct{}, o.MaxInFlight)
@@ -169,4 +180,18 @@ func clientAddr(r *http.Request) netip.Addr {
 	}
 	a, _ := netip.ParseAddr(host)
 	return a
+}
+
+// loggedIP is the client address as it appears in logs: whole, or only its
+// network when TruncateClientIP is set (addresses are personal data).
+func (l *limits) loggedIP(a netip.Addr) string {
+	if !l.truncateIP || !a.IsValid() {
+		return a.String()
+	}
+	bits := 24
+	if a.Is6() {
+		bits = 48
+	}
+	p, _ := a.Prefix(bits)
+	return p.String()
 }

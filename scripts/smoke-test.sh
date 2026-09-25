@@ -33,3 +33,13 @@ for ddl in "DROP TABLE sessions" "TRUNCATE sessions" "ALTER TABLE sessions ADD C
 	printf '%s' "$out" | grep -qE 'must be owner|permission denied' || fail "unexpected error for $ddl: $out"
 done
 echo "ok: app role cannot change the schema"
+
+# The audit log is append-only for the API role, with a 30-day purge floor.
+as_app "INSERT INTO audit_events (user_id, action, resource_type, resource_id) VALUES (gen_random_uuid(), 'insert', 'plans', gen_random_uuid())" >/dev/null || fail "app role cannot append to the audit log"
+for sql in "SELECT count(*) FROM audit_events" "UPDATE audit_events SET action='delete'" "DELETE FROM audit_events"; do
+	if as_app "$sql" >/dev/null; then
+		fail "app role was allowed to run: $sql"
+	fi
+done
+as_app "SELECT purge_audit_events(interval '1 day')" | grep -q 'at least 30 days' || fail "audit purge accepted a 1-day retention"
+echo "ok: audit log is append-only for the app role"

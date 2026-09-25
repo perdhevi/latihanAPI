@@ -119,6 +119,21 @@ func (s *memStore) revokeFamily(_ context.Context, hash []byte, _ time.Time) err
 	}
 	return nil
 }
+func (s *memStore) deleteCredential(_ context.Context, id uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for email, c := range s.credentials {
+		if c.id == id {
+			delete(s.credentials, email)
+		}
+	}
+	for hash, t := range s.tokens {
+		if t.credentialID == id {
+			delete(s.tokens, hash)
+		}
+	}
+	return nil
+}
 func (s *memStore) revokeLocked(family uuid.UUID) {
 	for _, t := range s.tokens {
 		if t.familyID == family {

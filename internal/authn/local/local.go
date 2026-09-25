@@ -173,3 +173,16 @@ func refreshHash(plain string) ([]byte, bool) {
 	sum := sha256.Sum256([]byte(plain))
 	return sum[:], true
 }
+
+// EraseAccount deletes the credential behind id, with its refresh tokens
+// (ON DELETE CASCADE). Identities from other issuers are not ours to erase.
+func (p *Provider) EraseAccount(ctx context.Context, id auth.Identity) error {
+	if id.Issuer != p.issuer {
+		return nil
+	}
+	credentialID, err := uuid.Parse(id.Subject)
+	if err != nil {
+		return nil
+	}
+	return p.store.deleteCredential(ctx, credentialID)
+}

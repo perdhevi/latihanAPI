@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "latihanApi"
-  version: "0.7.0"
+  version: "0.8.0"
   description: "Personal sessions, plans, profiles and measurement history. /exercises has been removed. Single-record responses carry an ETag; PUT and DELETE accept If-Match for optimistic concurrency. Creating POSTs accept Idempotency-Key for safe retries. Lists use cursor pagination (limit, cursor, next_cursor). Requests are rate limited per client address, per account, and more strictly on /api/v1/auth; limited requests get 429 with Retry-After. Every /api/v1 operation except /api/v1/auth/* requires a bearer token from the configured provider. The /api/v1/auth endpoints and /.well-known/jwks.json exist only with the built-in jwt provider. POST /api/v1/users links the caller's identity to a new profile; other operations require that profile. Callers only ever see and change their own records: owners come from the token, never from input, and other users' records return 404. All responses include X-Request-ID. Input bodies are limited to 1 MiB; unknown JSON fields, unknown/repeated query parameters and multiple JSON values are rejected. Strings are trimmed. PUT fully replaces editable fields; no upserts. UUIDs and creation timestamps are server-managed. HTTP method errors use the same Error schema."
 servers:
   -
@@ -11,6 +11,8 @@ security:
 tags:
   -
     name: "Health"
+  -
+    name: "Account"
   -
     name: "Auth"
   -
@@ -1331,6 +1333,60 @@ paths:
                     type: "array"
                     items:
                       type: "object"
+  "/api/v1/account/export":
+    get:
+      operationId: "exportAccount"
+      tags:
+        - "Account"
+      summary: "Download everything the service holds about the caller"
+      description: "Profile, linked identities, all measurements, plans and sessions as one JSON document, streamed. Recorded in the audit log. Rate limited per user (RATE_LIMIT_EXPORT, default 4 per hour). If a read fails part-way the connection is aborted rather than sending an incomplete document."
+      responses:
+        "200":
+          description: "The export"
+          headers:
+            Content-Disposition:
+              schema:
+                type: "string"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/AccountExport"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/account":
+    delete:
+      operationId: "eraseAccount"
+      tags:
+        - "Account"
+      summary: "Erase the caller's data and account"
+      description: "Deletes the profile, identity links, measurements, plans, sessions and stored idempotency responses in one transaction, then the login account if the built-in provider holds it. Accounts at external identity providers must be deleted there. Works without a profile, so an interrupted erasure can be finished; repeating it is harmless. Backups keep erased data until they expire (see BACKUP_RETENTION_DAYS). The audit log keeps that an erasure happened, under a UUID that no longer identifies anyone."
+      responses:
+        "204":
+          description: "Erased, or nothing left to erase"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
 components:
   parameters:
     IdempotencyKey:
@@ -1418,6 +1474,58 @@ components:
           schema:
             "$ref": "#/components/schemas/Error"
   schemas:
+    Identity:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "issuer"
+        - "subject"
+        - "created_at"
+      properties:
+        issuer:
+          type: "string"
+        subject:
+          type: "string"
+        created_at:
+          type: "string"
+          format: "date-time"
+    AccountExport:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "format"
+        - "exported_at"
+        - "user"
+        - "identities"
+        - "measurements"
+        - "plans"
+        - "sessions"
+      properties:
+        format:
+          type: "string"
+          enum:
+            - "latihan-export/1"
+        exported_at:
+          type: "string"
+          format: "date-time"
+        user:
+          "$ref": "#/components/schemas/User"
+        identities:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/Identity"
+        measurements:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/Measurement"
+        plans:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/Plan"
+        sessions:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/Session"
     Credentials:
       type: "object"
       additionalProperties: false

@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/perdhevi/latihanAPI/auth"
+	"github.com/perdhevi/latihanAPI/internal/account"
 	"github.com/perdhevi/latihanAPI/internal/conditional"
 	"github.com/perdhevi/latihanAPI/internal/httpjson"
 	"github.com/perdhevi/latihanAPI/internal/idempotency"
@@ -40,6 +41,7 @@ type handlers struct {
 	// idempotency stores responses for Idempotency-Key retries; nil disables it.
 	idempotency *idempotency.Store
 	metrics     *telemetry.Metrics
+	account     *account.Store
 }
 
 func (h *handlers) fail(w http.ResponseWriter, r *http.Request, err error, resource string) {
