@@ -97,7 +97,8 @@ func (r *PostgresRepository) GetMeasurement(ctx context.Context, userID, id uuid
 	return scanMeasurement(r.pool.QueryRow(ctx, `SELECT `+measurementColumns+` FROM measurements WHERE user_id=$1 AND id=$2`, userID, id))
 }
 func (r *PostgresRepository) ListMeasurements(ctx context.Context, userID uuid.UUID, page validation.Page) ([]Measurement, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+measurementColumns+` FROM measurements WHERE user_id=$1 ORDER BY measured_at DESC,id DESC LIMIT $2 OFFSET $3`, userID, page.Limit, page.Offset)
+	tail, args := page.SQL("measured_at", []any{userID})
+	rows, err := r.pool.Query(ctx, `SELECT `+measurementColumns+` FROM measurements WHERE user_id=$1`+tail, args...)
 	if err != nil {
 		return nil, err
 	}

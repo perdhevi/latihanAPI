@@ -59,7 +59,8 @@ func (r *PostgresRepository) GetPlan(ctx context.Context, owner, id uuid.UUID) (
 	return scanPlan(r.pool.QueryRow(ctx, `SELECT `+planColumns+` FROM plans WHERE id=$1 AND user_id=$2`, id, owner))
 }
 func (r *PostgresRepository) ListPlans(ctx context.Context, owner uuid.UUID, page validation.Page) ([]Plan, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+planColumns+` FROM plans WHERE user_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3`, owner, page.Limit, page.Offset)
+	tail, args := page.SQL("created_at", []any{owner})
+	rows, err := r.pool.Query(ctx, `SELECT `+planColumns+` FROM plans WHERE user_id=$1`+tail, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +167,8 @@ func (r *PostgresRepository) GetSession(ctx context.Context, owner, id uuid.UUID
 	return scanSession(r.pool.QueryRow(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE id=$1 AND user_id=$2`, id, owner))
 }
 func (r *PostgresRepository) ListSessions(ctx context.Context, owner uuid.UUID, page validation.Page) ([]Session, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE user_id=$1 ORDER BY performed_at DESC,id DESC LIMIT $2 OFFSET $3`, owner, page.Limit, page.Offset)
+	tail, args := page.SQL("performed_at", []any{owner})
+	rows, err := r.pool.Query(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE user_id=$1`+tail, args...)
 	if err != nil {
 		return nil, err
 	}

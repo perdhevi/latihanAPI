@@ -24,6 +24,11 @@ from the verified token, never from request input, and another user's records an
 404 exactly as if they did not exist. Compose binds to localhost; see the
 [hardening roadmap](docs/ROADMAP.md) for what comes next.
 
+## Breaking change: cursor pagination
+
+List endpoints take `cursor` instead of `offset` and return `next_cursor` instead of
+`offset`. Requests that still send `offset` get 400.
+
 ## Breaking change: owners come from the token
 
 Requests no longer carry `user_id`. Plan and session bodies that include it, and
@@ -239,12 +244,14 @@ response codes are in [api/openapi.yaml](api/openapi.yaml) (OpenAPI 3.0.3).
 | `/sessions/{id}` | GET, PUT, DELETE | Session CRUD |
 
 `me` may be replaced by the caller's own user ID; any other user ID returns 404.
-Lists contain only the caller's records. All lists support `limit` (1..100,
-default 20) and `offset` (0..2147483647, default 0). Responses are
-`{"items":[],"limit":20,"offset":0}`. Sessions sort by `performed_at DESC, id DESC`,
+Lists contain only the caller's records and use cursor pagination: `limit` (1..100,
+default 20) and `cursor`. Responses are `{"items":[],"limit":20,"next_cursor":"..."}`;
+pass `next_cursor` back as `cursor` for the next page, which is `null` on the last
+page. Sessions sort by `performed_at DESC, id DESC`,
 measurements by `measured_at DESC, id DESC`, and plans by `created_at DESC, id DESC`.
-Lists return an empty page when the caller has no records.
-Offset pagination is not a consistent snapshot during concurrent writes.
+Lists return an empty page when the caller has no records. Cursors are positions,
+not counts, so records added or deleted between pages never cause skipped or
+repeated items, and a deep page costs the same as the first.
 
 Creates return 201 with `Location`; reads and replacements return 200; deletes
 return 204. Missing records, and records owned by someone else, return 404. PUT
@@ -367,11 +374,43 @@ with pagination; it does not overwrite or merge previous measurements.
 - Errors have the shape `{"error":{"code":"session_not_found","message":"session not found"}}`.
   Unexpected failures return generic 500 responses; SQL and internal details stay
   out of client responses. Request bodies are not logged.
-- Every response has a generated `X-Request-ID`; logs record ID, method, path, status,
-  and duration. Health, readiness, recovery, and error privacy are tested.
+- Every response has a generated `X-Request-ID` and `Cache-Control: no-store`; logs
+  record ID, client address, method, path, status, and duration. Health, readiness, recovery, and error privacy are tested.
 - HTTP timeouts: headers 5s, read 10s, write 15s, idle 60s. Database request contexts
   have a 10s deadline; readiness has 2s. SIGINT/SIGTERM drain requests for up to 10s,
   force-close remaining requests if necessary, then close the pool. Compose allows 15s.
+- Request headers are capped at 16 KiB (`MaxHeaderBytes`; Go adds 4 KiB of slack, so
+  requests with about 20 KiB of headers or more get 431).
+
+## Abuse limits
+
+Every limit has a default, so a fresh deployment is protected; tune them in `.env`.
+Rate limits use token buckets written `N/unit:burst` (unit `s`, `m` or `h`), or `off`.
+
+| Setting | Default | Applies to |
+| --- | --- | --- |
+| `RATE_LIMIT_IP` | `50/s:100` | Every client address (IPv6 per /64), all routes except `/health` and `/ready` |
+| `RATE_LIMIT_USER` | `10/s:30` | Every authenticated identity, whatever address it uses |
+| `RATE_LIMIT_AUTH` | `10/m:10` | Every client address on routes the auth provider mounts (login, register, refresh) |
+| `MAX_IN_FLIGHT` | `256` | Concurrent requests; excess ones get 503 `overloaded` at once instead of queueing |
+| `TRUSTED_PROXIES` | none | Addresses or CIDRs allowed to set `X-Forwarded-For` |
+| `DB_MAX_CONNS` | `10` | PostgreSQL connections |
+| `DB_STATEMENT_TIMEOUT` | `5s` | Enforced by PostgreSQL itself, with a 3s `lock_timeout` and a 10s idle-in-transaction timeout |
+
+Limited requests get 429 `rate_limited` with `Retry-After` in seconds.
+
+- **Client addresses.** `X-Forwarded-For` is ignored unless the connection comes
+  from `TRUSTED_PROXIES`; then the rightmost address that is not a trusted proxy is
+  the client, and anything a client wrote to the left of it is ignored. Behind a
+  reverse proxy, list the proxy here, or every client shares the proxy's limit.
+- **Memory.** Limiters live in memory: fine for one instance, but several instances
+  would each allow the full rate. At most 100,000 addresses are tracked; beyond
+  that new addresses get 429 until idle ones expire, rather than evicting (and so
+  resetting) the limits of active clients.
+- **Password hashing.** On top of `RATE_LIMIT_AUTH`, at most four argon2id hashes
+  run at once (see [Built-in accounts](#built-in-accounts)).
+- **Mobile networks.** Many phones can share one address behind carrier NAT. If
+  real users hit `RATE_LIMIT_IP`, raise it; `RATE_LIMIT_USER` still bounds each account.
 
 ## Local Go development
 
@@ -468,7 +507,10 @@ ownership constraints, stable plan snapshots, plan changes/detachment, compariso
 metrics, missing/unplanned exercises, history ordering, pagination, cancellation,
 deletion conflicts, migration rollback/reapplication, identity linking, the 401/403/409/503
 authentication responses, the built-in provider end to end (register, profile,
-refresh, reuse detection, logout; concurrent refreshes of one token), and cross-user access: an intruder holding every ID of
+refresh, reuse detection, logout; concurrent refreshes of one token), abuse limits (per-IP,
+per-user and auth-route limits, spoofed `X-Forwarded-For`, IPv6 /64 grouping, load
+shedding), cursor pagination across ties and concurrent inserts, PostgreSQL-enforced
+statement timeouts, keyset index use, and cross-user access: an intruder holding every ID of
 another user's records gets 404 on every route and the records stay unchanged. Every built-in provider also runs the
 `auth/authtest` conformance suite against a fake TLS identity provider.
 

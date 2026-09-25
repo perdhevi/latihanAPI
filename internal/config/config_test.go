@@ -35,3 +35,35 @@ func TestLoad(t *testing.T) {
 		})
 	}
 }
+
+func TestAbuseSettings(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/latihan")
+	t.Setenv("AUTH_PROVIDER", "jwt")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.RateLimitIP.Enabled() || !cfg.RateLimitUser.Enabled() || !cfg.RateLimitAuth.Enabled() || cfg.MaxInFlight != 256 || cfg.DBMaxConns != 10 || len(cfg.TrustedProxies) != 0 {
+		t.Fatalf("defaults must protect a fresh deployment: %+v", cfg)
+	}
+	t.Setenv("TRUSTED_PROXIES", "172.18.0.0/16, 10.0.0.7 ,::1")
+	t.Setenv("RATE_LIMIT_AUTH", "off")
+	cfg, err = Load()
+	if err != nil || len(cfg.TrustedProxies) != 3 || cfg.TrustedProxies[1].String() != "10.0.0.7/32" || cfg.RateLimitAuth.Enabled() {
+		t.Fatalf("%+v %v", cfg, err)
+	}
+	for name, value := range map[string]string{
+		"TRUSTED_PROXIES":      "proxy.example",
+		"RATE_LIMIT_IP":        "fast",
+		"MAX_IN_FLIGHT":        "0",
+		"DB_MAX_CONNS":         "5000",
+		"DB_STATEMENT_TIMEOUT": "2h",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("%s=%s accepted", name, value)
+			}
+		})
+	}
+}

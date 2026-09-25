@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/perdhevi/latihanAPI/internal/training"
+	"github.com/perdhevi/latihanAPI/internal/validation"
 )
 
 func (h *handlers) createPlan(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +62,7 @@ func (h *handlers) deletePlan(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 func (h *handlers) listPlans(w http.ResponseWriter, r *http.Request) {
-	q, ok := queryValues(w, r, "limit", "offset")
+	q, ok := queryValues(w, r, "limit", "cursor")
 	if !ok {
 		return
 	}
@@ -74,7 +75,7 @@ func (h *handlers) listPlans(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "plan")
 		return
 	}
-	writePage(w, plans, page)
+	writePage(w, plans, page, func(p training.Plan) validation.Cursor { return validation.Cursor{Time: p.CreatedAt, ID: p.ID} })
 }
 func (h *handlers) comparison(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "id")
@@ -149,7 +150,7 @@ func (h *handlers) deleteSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 func (h *handlers) listSessions(w http.ResponseWriter, r *http.Request) {
-	q, ok := queryValues(w, r, "limit", "offset")
+	q, ok := queryValues(w, r, "limit", "cursor")
 	if !ok {
 		return
 	}
@@ -162,5 +163,5 @@ func (h *handlers) listSessions(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "session")
 		return
 	}
-	writePage(w, sessions, page)
+	writePage(w, sessions, page, func(s training.Session) validation.Cursor { return validation.Cursor{Time: s.PerformedAt, ID: s.ID} })
 }

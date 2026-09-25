@@ -30,6 +30,7 @@ type handlers struct {
 	profiles *profile.Service
 	auth     auth.Authenticator
 	logger   *slog.Logger
+	limits   *limits
 }
 
 func (h *handlers) fail(w http.ResponseWriter, r *http.Request, err error, resource string) {
@@ -96,12 +97,13 @@ func pagination(w http.ResponseWriter, q url.Values) (validation.Page, bool) {
 			return p, false
 		}
 	}
-	if q.Has("offset") {
-		p.Offset, err = strconv.Atoi(q.Get("offset"))
+	if q.Has("cursor") {
+		cursor, err := validation.DecodeCursor(q.Get("cursor"))
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "offset must be an integer")
+			writeError(w, http.StatusBadRequest, "validation_failed", err.Error())
 			return p, false
 		}
+		p.After = &cursor
 	}
 	if err := p.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, "validation_failed", err.Error())
@@ -109,13 +111,22 @@ func pagination(w http.ResponseWriter, q url.Values) (validation.Page, bool) {
 	}
 	return p, true
 }
-func writePage[T any](w http.ResponseWriter, items []T, page validation.Page) {
+
+// writePage writes one page. Repositories return up to Limit+1 items; the extra
+// one only signals that next_cursor is needed. position gives an item's cursor.
+func writePage[T any](w http.ResponseWriter, items []T, page validation.Page, position func(T) validation.Cursor) {
 	if items == nil {
 		items = make([]T, 0)
 	}
+	var next *string
+	if len(items) > page.Limit {
+		items = items[:page.Limit]
+		cursor := position(items[len(items)-1]).Encode()
+		next = &cursor
+	}
 	writeJSON(w, http.StatusOK, struct {
-		Items  []T `json:"items"`
-		Limit  int `json:"limit"`
-		Offset int `json:"offset"`
-	}{items, page.Limit, page.Offset})
+		Items      []T     `json:"items"`
+		Limit      int     `json:"limit"`
+		NextCursor *string `json:"next_cursor"`
+	}{items, page.Limit, next})
 }

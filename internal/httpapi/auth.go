@@ -51,6 +51,9 @@ func (h *handlers) authenticated(next http.HandlerFunc) http.HandlerFunc {
 			challenge(w, r)
 			return
 		}
+		if !h.allow(w, r, h.limits.perUser, "user:"+id.Issuer+"|"+id.Subject) {
+			return
+		}
 		userID, err := h.profiles.ResolveIdentity(r.Context(), profile.Identity{Issuer: id.Issuer, Subject: id.Subject})
 		if err != nil && !errors.Is(err, profile.ErrNotFound) {
 			h.fail(w, r, err, "user")

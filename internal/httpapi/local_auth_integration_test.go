@@ -35,7 +35,7 @@ func TestBuiltInProviderEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, provider, logger)
+	h := NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, provider, logger, Options{})
 
 	type tokens struct {
 		AccessToken  string `json:"access_token"`

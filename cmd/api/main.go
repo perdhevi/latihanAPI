@@ -46,7 +46,7 @@ func run() error {
 	slog.SetDefault(logger)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	pool, err := database.Open(ctx, cfg.DatabaseURL)
+	pool, err := database.Open(ctx, cfg.DatabaseURL, database.Options{MaxConns: cfg.DBMaxConns, StatementTimeout: cfg.DBStatementTimeout})
 	if err != nil {
 		return err
 	}
@@ -62,8 +62,10 @@ func run() error {
 	logger.Info("authentication provider ready", "provider", cfg.AuthProvider)
 	sessions := training.NewService(training.NewPostgresRepository(pool))
 	profiles := profile.NewService(profile.NewPostgresRepository(pool))
-	server := &http.Server{Addr: cfg.HTTPAddr, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
-	server.Handler = httpapi.NewRouter(sessions, profiles, pool, authenticator, logger)
+	server := newServer(cfg.HTTPAddr, httpapi.NewRouter(sessions, profiles, pool, authenticator, logger, httpapi.Options{
+		PerIP: cfg.RateLimitIP, PerUser: cfg.RateLimitUser, Public: cfg.RateLimitAuth,
+		MaxInFlight: cfg.MaxInFlight, TrustedProxies: cfg.TrustedProxies,
+	}))
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.ListenAndServe() }()
 	logger.Info("server listening", "address", cfg.HTTPAddr)
@@ -107,4 +109,19 @@ func keygen(args []string) error {
 		fmt.Println("signing key", *out, "already exists; left unchanged")
 	}
 	return nil
+}
+
+// newServer bounds how long and how much a client may take to send a request.
+// Go adds 4 KiB of slack to MaxHeaderBytes, so headers are refused above about
+// 20 KiB with 431 Request Header Fields Too Large.
+func newServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		MaxHeaderBytes:    16 << 10,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 }

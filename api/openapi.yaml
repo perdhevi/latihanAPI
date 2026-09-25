@@ -1,8 +1,8 @@
 openapi: "3.0.3"
 info:
   title: "latihanApi"
-  version: "0.5.0"
-  description: "Personal sessions, plans, profiles and measurement history. /exercises has been removed. Every /api/v1 operation except /api/v1/auth/* requires a bearer token from the configured provider. The /api/v1/auth endpoints and /.well-known/jwks.json exist only with the built-in jwt provider. POST /api/v1/users links the caller's identity to a new profile; other operations require that profile. Callers only ever see and change their own records: owners come from the token, never from input, and other users' records return 404. All responses include X-Request-ID. Input bodies are limited to 1 MiB; unknown JSON fields, unknown/repeated query parameters and multiple JSON values are rejected. Strings are trimmed. PUT fully replaces editable fields; no upserts. UUIDs and creation timestamps are server-managed. HTTP method errors use the same Error schema."
+  version: "0.6.0"
+  description: "Personal sessions, plans, profiles and measurement history. /exercises has been removed. Lists use cursor pagination (limit, cursor, next_cursor). Requests are rate limited per client address, per account, and more strictly on /api/v1/auth; limited requests get 429 with Retry-After. Every /api/v1 operation except /api/v1/auth/* requires a bearer token from the configured provider. The /api/v1/auth endpoints and /.well-known/jwks.json exist only with the built-in jwt provider. POST /api/v1/users links the caller's identity to a new profile; other operations require that profile. Callers only ever see and change their own records: owners come from the token, never from input, and other users' records return 404. All responses include X-Request-ID. Input bodies are limited to 1 MiB; unknown JSON fields, unknown/repeated query parameters and multiple JSON values are rejected. Strings are trimmed. PUT fully replaces editable fields; no upserts. UUIDs and creation timestamps are server-managed. HTTP method errors use the same Error schema."
 servers:
   -
     url: "http://localhost:8080"
@@ -69,12 +69,14 @@ paths:
             schema:
               "$ref": "#/components/schemas/SessionInput"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "201":
           description: "Created"
           content:
@@ -126,20 +128,21 @@ paths:
             maximum: 100
             default: 20
         -
-          name: "offset"
+          name: "cursor"
           in: "query"
+          description: "next_cursor from the previous page; omit for the first page. Opaque."
           schema:
-            type: "integer"
-            minimum: 0
-            maximum: 2147483647
-            default: 0
+            type: "string"
+            maxLength: 128
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Page"
           content:
@@ -150,7 +153,7 @@ paths:
                 required:
                   - "items"
                   - "limit"
-                  - "offset"
+                  - "next_cursor"
                 properties:
                   items:
                     type: "array"
@@ -158,8 +161,10 @@ paths:
                       "$ref": "#/components/schemas/Session"
                   limit:
                     type: "integer"
-                  offset:
-                    type: "integer"
+                  next_cursor:
+                    type: "string"
+                    nullable: true
+                    description: "Pass as cursor to get the next page; null on the last page."
         "400":
           description: "Invalid JSON, UUID, input, query, owner or plan reference."
           content:
@@ -188,12 +193,14 @@ paths:
         - "Sessions"
       summary: "Get session"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Found"
           content:
@@ -230,12 +237,14 @@ paths:
             schema:
               "$ref": "#/components/schemas/SessionInput"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Updated"
           content:
@@ -278,12 +287,14 @@ paths:
         - "Sessions"
       summary: "Delete session"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "204":
           description: "Deleted, no body"
         "400":
@@ -317,12 +328,14 @@ paths:
             schema:
               "$ref": "#/components/schemas/PlanInput"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "201":
           description: "Created"
           content:
@@ -374,20 +387,21 @@ paths:
             maximum: 100
             default: 20
         -
-          name: "offset"
+          name: "cursor"
           in: "query"
+          description: "next_cursor from the previous page; omit for the first page. Opaque."
           schema:
-            type: "integer"
-            minimum: 0
-            maximum: 2147483647
-            default: 0
+            type: "string"
+            maxLength: 128
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Page"
           content:
@@ -398,7 +412,7 @@ paths:
                 required:
                   - "items"
                   - "limit"
-                  - "offset"
+                  - "next_cursor"
                 properties:
                   items:
                     type: "array"
@@ -406,8 +420,10 @@ paths:
                       "$ref": "#/components/schemas/Plan"
                   limit:
                     type: "integer"
-                  offset:
-                    type: "integer"
+                  next_cursor:
+                    type: "string"
+                    nullable: true
+                    description: "Pass as cursor to get the next page; null on the last page."
         "400":
           description: "Invalid JSON, UUID, input, query, owner or plan reference."
           content:
@@ -436,12 +452,14 @@ paths:
         - "Plans"
       summary: "Get plan"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Found"
           content:
@@ -478,12 +496,14 @@ paths:
             schema:
               "$ref": "#/components/schemas/PlanInput"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Updated"
           content:
@@ -526,12 +546,14 @@ paths:
         - "Plans"
       summary: "Delete plan"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "204":
           description: "Deleted, no body"
         "400":
@@ -571,6 +593,8 @@ paths:
             schema:
               "$ref": "#/components/schemas/UserInput"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "409":
@@ -580,7 +604,7 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "201":
           description: "Created"
           content:
@@ -631,12 +655,14 @@ paths:
         - "Users"
       summary: "Get user"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Found"
           content:
@@ -673,12 +699,14 @@ paths:
             schema:
               "$ref": "#/components/schemas/UserInput"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Updated"
           content:
@@ -721,12 +749,14 @@ paths:
         - "Users"
       summary: "Delete user"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "204":
           description: "Deleted, no body"
         "400":
@@ -774,12 +804,14 @@ paths:
             schema:
               "$ref": "#/components/schemas/MeasurementInput"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "201":
           description: "Created"
           content:
@@ -831,20 +863,21 @@ paths:
             maximum: 100
             default: 20
         -
-          name: "offset"
+          name: "cursor"
           in: "query"
+          description: "next_cursor from the previous page; omit for the first page. Opaque."
           schema:
-            type: "integer"
-            minimum: 0
-            maximum: 2147483647
-            default: 0
+            type: "string"
+            maxLength: 128
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Page"
           content:
@@ -855,7 +888,7 @@ paths:
                 required:
                   - "items"
                   - "limit"
-                  - "offset"
+                  - "next_cursor"
                 properties:
                   items:
                     type: "array"
@@ -863,8 +896,10 @@ paths:
                       "$ref": "#/components/schemas/Measurement"
                   limit:
                     type: "integer"
-                  offset:
-                    type: "integer"
+                  next_cursor:
+                    type: "string"
+                    nullable: true
+                    description: "Pass as cursor to get the next page; null on the last page."
         "400":
           description: "Invalid JSON, UUID, input, query, owner or plan reference."
           content:
@@ -906,12 +941,14 @@ paths:
         - "Measurements"
       summary: "Get measurement"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Found"
           content:
@@ -948,12 +985,14 @@ paths:
             schema:
               "$ref": "#/components/schemas/MeasurementInput"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Updated"
           content:
@@ -996,12 +1035,14 @@ paths:
         - "Measurements"
       summary: "Delete measurement"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "204":
           description: "Deleted, no body"
         "400":
@@ -1047,12 +1088,14 @@ paths:
             format: "uuid"
             description: "Nonzero UUID"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "401":
           "$ref": "#/components/responses/Unauthorized"
         "403":
           "$ref": "#/components/responses/ProfileRequired"
         "503":
-          "$ref": "#/components/responses/AuthUnavailable"
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Planned versus actual"
           content:
@@ -1092,6 +1135,8 @@ paths:
             schema:
               "$ref": "#/components/schemas/Credentials"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "201":
           "$ref": "#/components/responses/Tokens"
         "400":
@@ -1121,6 +1166,8 @@ paths:
             schema:
               "$ref": "#/components/schemas/Credentials"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "200":
           "$ref": "#/components/responses/Tokens"
         "401":
@@ -1144,6 +1191,8 @@ paths:
             schema:
               "$ref": "#/components/schemas/RefreshRequest"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "200":
           "$ref": "#/components/responses/Tokens"
         "401":
@@ -1167,6 +1216,8 @@ paths:
             schema:
               "$ref": "#/components/schemas/RefreshRequest"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "204":
           description: "Revoked, or nothing to revoke"
   "/.well-known/jwks.json":
@@ -1177,6 +1228,8 @@ paths:
       summary: "Public keys that verify this service's access tokens (AUTH_PROVIDER=jwt only)"
       security: []
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
         "200":
           description: "JSON Web Key Set"
           content:
@@ -1198,6 +1251,16 @@ components:
       bearerFormat: "JWT"
       description: "Token from the configured AUTH_PROVIDER (Firebase ID token, Cognito access or ID token, or OIDC access token)."
   responses:
+    RateLimited:
+      description: "rate_limited: too many requests from this address or account. Retry-After gives the wait in seconds."
+      headers:
+        Retry-After:
+          schema:
+            type: "integer"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
     Tokens:
       description: "Token pair. Sent with Cache-Control: no-store."
       content:
@@ -1220,8 +1283,8 @@ components:
         "application/json":
           schema:
             "$ref": "#/components/schemas/Error"
-    AuthUnavailable:
-      description: "The authentication provider could not verify the token, for example because its key server is unreachable."
+    ServiceUnavailable:
+      description: "The authentication provider could not verify the token (auth_unavailable), or the server is at its concurrent-request limit (overloaded, with Retry-After)."
       content:
         "application/json":
           schema:

@@ -33,9 +33,15 @@ type fakeTraining struct {
 	panicOnGet bool
 	ctx        context.Context
 	owner      uuid.UUID
+	// entered and release, when set, hold GetSession open to test concurrency.
+	entered, release chan struct{}
 }
 
 func (s *fakeTraining) GetSession(ctx context.Context, owner, id uuid.UUID) (training.Session, error) {
+	if s.release != nil {
+		s.entered <- struct{}{}
+		<-s.release
+	}
 	s.ctx = ctx
 	s.owner = owner
 	if s.panicOnGet {
@@ -76,7 +82,7 @@ func (fakeProfiles) GetUser(_ context.Context, id uuid.UUID) (profile.User, erro
 }
 
 func testRouter(repo *fakeTraining, p *testPinger) http.Handler {
-	return NewRouter(training.NewService(repo), profile.NewService(fakeProfiles{}), p, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	return NewRouter(training.NewService(repo), profile.NewService(fakeProfiles{}), p, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{})
 }
 func request(h http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	return requestAs(h, "Bearer test|athlete", method, path, body)
@@ -103,7 +109,9 @@ func TestInvalidRequests(t *testing.T) {
 		{"nil UUID", "GET", "/api/v1/sessions/00000000-0000-0000-0000-000000000000", "", 400},
 		{"owner in query", "GET", "/api/v1/sessions?user_id=" + id, "", 400},
 		{"zero limit", "GET", "/api/v1/sessions?limit=0", "", 400},
-		{"overflow offset", "GET", "/api/v1/plans?offset=99999999999999999999", "", 400},
+		{"offset no longer supported", "GET", "/api/v1/plans?offset=10", "", 400},
+		{"malformed cursor", "GET", "/api/v1/plans?cursor=not-a-cursor", "", 400},
+		{"oversized cursor", "GET", "/api/v1/sessions?cursor=" + strings.Repeat("A", 200), "", 400},
 		{"duplicate query", "GET", "/api/v1/plans?limit=1&limit=2", "", 400},
 		{"unknown query", "GET", "/api/v1/plans?sort=name", "", 400},
 		{"comparison needs session", "GET", "/api/v1/plans/" + id + "/comparison", "", 400},
@@ -156,7 +164,7 @@ func TestHealthReadinessAndRecovery(t *testing.T) {
 		t.Fatal("readiness should recover")
 	}
 	var logs bytes.Buffer
-	h = NewRouter(training.NewService(&fakeTraining{panicOnGet: true}), profile.NewService(fakeProfiles{}), p, testAuth{}, slog.New(slog.NewJSONHandler(&logs, nil)))
+	h = NewRouter(training.NewService(&fakeTraining{panicOnGet: true}), profile.NewService(fakeProfiles{}), p, testAuth{}, slog.New(slog.NewJSONHandler(&logs, nil)), Options{})
 	w := request(h, "GET", "/api/v1/sessions/"+uuid.NewString(), "")
 	if w.Code != 500 || strings.Contains(w.Body.String(), "private") {
 		t.Fatalf("panic: %d %s", w.Code, w.Body)
@@ -242,7 +250,7 @@ func (registeringAuth) RegisterRoutes(mux *http.ServeMux) {
 }
 
 func TestProviderRoutesArePublic(t *testing.T) {
-	h := NewRouter(training.NewService(&fakeTraining{}), profile.NewService(fakeProfiles{}), &testPinger{}, registeringAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h := NewRouter(training.NewService(&fakeTraining{}), profile.NewService(fakeProfiles{}), &testPinger{}, registeringAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{})
 	if w := requestAs(h, "", "POST", "/api/v1/auth/login", "{}"); w.Code != http.StatusNoContent {
 		t.Fatalf("provider route not mounted: %d", w.Code)
 	}

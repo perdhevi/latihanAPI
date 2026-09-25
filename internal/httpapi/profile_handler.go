@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/perdhevi/latihanAPI/internal/profile"
+	"github.com/perdhevi/latihanAPI/internal/validation"
 )
 
 func (h *handlers) createUser(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +133,7 @@ func (h *handlers) listMeasurements(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	q, ok := queryValues(w, r, "limit", "offset")
+	q, ok := queryValues(w, r, "limit", "cursor")
 	if !ok {
 		return
 	}
@@ -145,5 +146,5 @@ func (h *handlers) listMeasurements(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "user")
 		return
 	}
-	writePage(w, items, page)
+	writePage(w, items, page, func(m profile.Measurement) validation.Cursor { return validation.Cursor{Time: m.MeasuredAt, ID: m.ID} })
 }

@@ -66,7 +66,7 @@ func callAs(t *testing.T, h http.Handler, subject, method, path string, body any
 func TestTrainingAPIIntegration(t *testing.T) {
 	pool := testdb.Open(t)
 	repo := training.NewPostgresRepository(pool)
-	h := NewRouter(training.NewService(repo), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h := NewRouter(training.NewService(repo), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{})
 	var user, other profile.User
 	call(t, h, "POST", "/api/v1/users", profile.UserInput{DisplayName: " Athlete "}, 201, &user)
 	callAs(t, h, "other", "POST", "/api/v1/users", profile.UserInput{DisplayName: "Other"}, 201, &other)
@@ -158,14 +158,15 @@ func TestTrainingAPIIntegration(t *testing.T) {
 		t.Fatal("standalone session has a plan")
 	}
 	var page struct {
-		Items []training.Session `json:"items"`
+		Items      []training.Session `json:"items"`
+		NextCursor *string            `json:"next_cursor"`
 	}
 	call(t, h, "GET", "/api/v1/sessions?limit=1", nil, 200, &page)
-	if len(page.Items) != 1 || page.Items[0].ID != second.ID {
+	if len(page.Items) != 1 || page.Items[0].ID != second.ID || page.NextCursor == nil {
 		t.Fatal("session ordering/pagination wrong")
 	}
-	call(t, h, "GET", "/api/v1/sessions?limit=1&offset=1", nil, 200, &page)
-	if len(page.Items) != 1 || page.Items[0].ID != session.ID {
+	call(t, h, "GET", "/api/v1/sessions?limit=1&cursor="+*page.NextCursor, nil, 200, &page)
+	if len(page.Items) != 1 || page.Items[0].ID != session.ID || page.NextCursor != nil {
 		t.Fatal("session second page wrong")
 	}
 	callAs(t, h, "other", "GET", "/api/v1/sessions", nil, 200, &page)
@@ -203,15 +204,16 @@ func TestTrainingAPIIntegration(t *testing.T) {
 	mInput.WeightKG = number(81)
 	call(t, h, "POST", measurementsURL, mInput, 201, &older)
 	var history struct {
-		Items []profile.Measurement `json:"items"`
+		Items      []profile.Measurement `json:"items"`
+		NextCursor *string               `json:"next_cursor"`
 	}
 	call(t, h, "GET", measurementsURL+"?limit=1", nil, 200, &history)
-	if len(history.Items) != 1 || history.Items[0].ID != measurement.ID {
+	if len(history.Items) != 1 || history.Items[0].ID != measurement.ID || history.NextCursor == nil {
 		t.Fatal("history ordering incorrect")
 	}
-	call(t, h, "GET", measurementsURL+"?limit=1&offset=1", nil, 200, &history)
+	call(t, h, "GET", measurementsURL+"?limit=1&cursor="+*history.NextCursor, nil, 200, &history)
 	if len(history.Items) != 1 || history.Items[0].ID != older.ID {
-		t.Fatal("history offset incorrect")
+		t.Fatal("history cursor incorrect")
 	}
 	measurementURL := measurementsURL + "/" + measurement.ID.String()
 	otherURL := "/api/v1/users/" + other.ID.String() + "/measurements/" + measurement.ID.String()
@@ -287,7 +289,7 @@ func TestMigrationRoundTrip(t *testing.T) {
 
 func TestIdentityLinkingIntegration(t *testing.T) {
 	pool := testdb.Open(t)
-	h := NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h := NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{})
 	callAs(t, h, "newcomer", "GET", "/api/v1/sessions", nil, 403, nil)
 	var user profile.User
 	callAs(t, h, "newcomer", "POST", "/api/v1/users", profile.UserInput{DisplayName: "New"}, 201, &user)
@@ -303,7 +305,7 @@ func TestIdentityLinkingIntegration(t *testing.T) {
 // read nor change them, and learns nothing beyond "not found".
 func TestCrossUserAccessIntegration(t *testing.T) {
 	pool := testdb.Open(t)
-	h := NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h := NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{})
 	var victim, intruder profile.User
 	callAs(t, h, "victim", "POST", "/api/v1/users", profile.UserInput{DisplayName: "Victim"}, 201, &victim)
 	callAs(t, h, "intruder", "POST", "/api/v1/users", profile.UserInput{DisplayName: "Intruder"}, 201, &intruder)
@@ -376,5 +378,52 @@ func TestCrossUserAccessIntegration(t *testing.T) {
 	callAs(t, h, "victim", "GET", "/api/v1/users/me", nil, 200, &me)
 	if me.ID != victim.ID || me.DisplayName != "Victim" {
 		t.Fatalf("profile changed: %+v", me)
+	}
+}
+
+// Paging with cursors visits every item exactly once, even when items with the
+// same timestamp straddle a page boundary or new items arrive mid-way.
+func TestCursorPaginationIntegration(t *testing.T) {
+	pool := testdb.Open(t)
+	h := NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{})
+	call(t, h, "POST", "/api/v1/users", profile.UserInput{DisplayName: "Pager"}, 201, nil)
+	base := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
+	want := map[uuid.UUID]bool{}
+	for i := range 7 {
+		// Pairs share a timestamp so ties must be broken by ID.
+		at := base.Add(time.Duration(i/2) * time.Hour)
+		var s training.Session
+		call(t, h, "POST", "/api/v1/sessions", training.SessionInput{Name: "S", PerformedAt: at, Exercises: []training.SessionExercise{{ExerciseInput: training.ExerciseInput{Name: "Walk", Kind: "cardio", Minutes: number(10)}}}}, 201, &s)
+		want[s.ID] = true
+	}
+	seen := map[uuid.UUID]bool{}
+	path := "/api/v1/sessions?limit=3"
+	var previous time.Time
+	for pages := 0; ; pages++ {
+		var page struct {
+			Items      []training.Session `json:"items"`
+			NextCursor *string            `json:"next_cursor"`
+		}
+		call(t, h, "GET", path, nil, 200, &page)
+		for _, s := range page.Items {
+			if seen[s.ID] {
+				t.Fatalf("session %s returned twice", s.ID)
+			}
+			if !previous.IsZero() && s.PerformedAt.After(previous) {
+				t.Fatal("pages out of order")
+			}
+			seen[s.ID], previous = true, s.PerformedAt
+		}
+		if pages == 0 {
+			// A newer session arriving mid-way must not shift later pages.
+			call(t, h, "POST", "/api/v1/sessions", training.SessionInput{Name: "Late", PerformedAt: base.Add(24 * time.Hour), Exercises: []training.SessionExercise{{ExerciseInput: training.ExerciseInput{Name: "Walk", Kind: "cardio", Minutes: number(10)}}}}, 201, nil)
+		}
+		if page.NextCursor == nil {
+			break
+		}
+		path = "/api/v1/sessions?limit=3&cursor=" + *page.NextCursor
+	}
+	if len(seen) != len(want) {
+		t.Fatalf("saw %d of %d sessions", len(seen), len(want))
 	}
 }

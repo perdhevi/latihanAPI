@@ -16,11 +16,15 @@ type Pinger interface{ Ping(context.Context) error }
 // NewRouter serves the API. Every /api/v1 route requires credentials that
 // authenticator accepts; health checks and any routes the provider
 // registers itself (such as login) are public.
-func NewRouter(sessions *training.Service, profiles *profile.Service, db Pinger, authenticator auth.Authenticator, logger *slog.Logger) http.Handler {
-	h := &handlers{training: sessions, profiles: profiles, auth: authenticator, logger: logger}
+func NewRouter(sessions *training.Service, profiles *profile.Service, db Pinger, authenticator auth.Authenticator, logger *slog.Logger, opts Options) http.Handler {
+	l := newLimits(opts)
+	h := &handlers{training: sessions, profiles: profiles, auth: authenticator, logger: logger, limits: l}
 	mux := http.NewServeMux()
+	// Provider routes get their own mux so the stricter public limit can be
+	// applied to exactly the routes the provider mounted.
+	providerMux := http.NewServeMux()
 	if provider, ok := authenticator.(auth.RouteRegistrar); ok {
-		provider.RegisterRoutes(mux)
+		provider.RegisterRoutes(providerMux)
 	}
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -72,5 +76,5 @@ func NewRouter(sessions *training.Service, profiles *profile.Service, db Pinger,
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "route not found")
 	})
-	return middleware(mux, logger)
+	return middleware(l.protect(mux, providerMux, h), logger, l)
 }
