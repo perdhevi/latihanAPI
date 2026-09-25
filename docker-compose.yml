@@ -1,39 +1,100 @@
+# Local development: cp .env.example .env && docker compose up --build
+# Production: see docker-compose.prod.yml, which adds TLS (Caddy) on top of this.
+#
+# Credentials come from files in SECRETS_DIR, mounted as Compose secrets. The
+# default, ./secrets/dev, holds committed development-only values; a real
+# deployment runs scripts/init-secrets.sh and sets SECRETS_DIR=./secrets.
+
+secrets:
+  postgres_password:
+    file: ${SECRETS_DIR:-./secrets/dev}/postgres_password
+  migrator_password:
+    file: ${SECRETS_DIR:-./secrets/dev}/migrator_password
+  app_password:
+    file: ${SECRETS_DIR:-./secrets/dev}/app_password
+  app_database_url:
+    file: ${SECRETS_DIR:-./secrets/dev}/app_database_url
+
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
     environment:
       POSTGRES_DB: latihan
       POSTGRES_USER: latihan
-      POSTGRES_PASSWORD: latihan
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      # Read by db/init/10-roles.sh when the volume is first created.
+      LATIHAN_MIGRATOR_PASSWORD_FILE: /run/secrets/migrator_password
+      LATIHAN_APP_PASSWORD_FILE: /run/secrets/app_password
+    secrets: [postgres_password, migrator_password, app_password]
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U latihan -d latihan"]
+      # Over TCP: during first-time initialisation the server listens only on
+      # its Unix socket, so this stays unhealthy until the roles exist.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U latihan -d latihan"]
       interval: 2s
       timeout: 3s
-      retries: 15
+      retries: 30
 
+  # Applies migrations as latihan_migrator, the schema owner.
   migrate:
-    image: migrate/migrate:v4.18.3
+    image: migrate/migrate:v4.18.3@sha256:39b59b389634e43bb3f2d4e94bc1edef0775ec2a9a3540ce6a2cf330e5daae55
     volumes:
       - ./migrations:/migrations:ro
-    command: ["-path", "/migrations", "-database", "postgres://latihan:latihan@postgres:5432/latihan?sslmode=disable", "up"]
+    secrets: [migrator_password]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - migrate -path /migrations -database "postgres://latihan_migrator:$$(cat /run/secrets/migrator_password)@postgres:5432/latihan?sslmode=disable" up
     depends_on:
       postgres:
         condition: service_healthy
 
+  # One-shot job: creates the jwt provider's signing key on first start and
+  # leaves it alone afterwards. Harmless when another AUTH_PROVIDER is used.
+  jwt-keys:
+    build: .
+    image: latihan-api:local
+    command: ["keygen", "-out", "/keys/signing.pem"]
+    volumes:
+      - jwt-keys:/keys
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
   latihan-api:
     build: .
+    image: latihan-api:local
+    # AUTH_* and other settings come from .env; the values below override it.
+    env_file:
+      - path: .env
+        required: false
     environment:
       HTTP_ADDR: ":8080"
-      DATABASE_URL: "postgres://latihan:latihan@postgres:5432/latihan?sslmode=disable"
+      # The API connects as latihan_app, which cannot change the schema.
+      # DATABASE_URL is blanked so a local-development value in .env cannot
+      # conflict with the secret file.
+      DATABASE_URL: ""
+      DATABASE_URL_FILE: /run/secrets/app_database_url
       LOG_LEVEL: "${LOG_LEVEL:-info}"
+      AUTH_JWT_KEY_FILE: "/keys/signing.pem"
+    secrets: [app_database_url]
+    volumes:
+      - jwt-keys:/keys:ro
     ports:
       - "127.0.0.1:8080:8080"
+    healthcheck:
+      # The image has no shell or wget; the binary checks itself.
+      test: ["CMD", "/usr/local/bin/api", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      jwt-keys:
         condition: service_completed_successfully
     stop_grace_period: 15s
     init: true
@@ -41,5 +102,49 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
 
+  # Encrypted backups (deploy/backup). Always on in production; locally:
+  #   BACKUP_AGE_RECIPIENT=age1... docker compose --profile backup up -d backup
+  backup:
+    build: ./deploy/backup
+    image: latihan-backup:local
+    profiles: [backup]
+    environment:
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+    secrets: [migrator_password]
+    volumes:
+      - ${BACKUP_DIR:-./backups}:/backups
+    # Owner of the backup files on the host.
+    user: "${BACKUP_UID:-1000}:${BACKUP_GID:-1000}"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # Unhealthy when no backup has succeeded for 26 hours.
+      test: ["CMD-SHELL", "test $$(( $$(date +%s) - $$(cat /backups/.last-success 2>/dev/null || echo 0) )) -lt 93600"]
+      interval: 5m
+      start_period: 10m
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  # Optional: docker compose --profile observability up
+  # Prometheus UI on http://localhost:9091, Jaeger UI on http://localhost:16686.
+  # Set OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 in .env to send traces.
+  prometheus:
+    image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+    profiles: [observability]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "127.0.0.1:9091:9090"
+
+  jaeger:
+    image: jaegertracing/jaeger:2.21.0@sha256:3d0ac795ff98aa04d1be04311d2dac6c25b4bfc8322dc02e53bc5b170c5018c3
+    profiles: [observability]
+    ports:
+      - "127.0.0.1:16686:16686"
+
 volumes:
   postgres-data:
+  jwt-keys:

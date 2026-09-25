@@ -6,3 +6,7 @@
 .tools
 bin
 coverage.out
+.keys
+secrets
+!secrets/dev
+backups

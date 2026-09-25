@@ -4,13 +4,15 @@ package testdb
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"os"
-	"path/filepath"
-	"testing"
-	"time"
 )
 
 // Open creates an isolated schema and applies the repository's actual migrations.
@@ -49,12 +51,14 @@ func Open(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	paths, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*.up.sql"))
+	// Locate migrations relative to this file, so any package's tests can use it.
+	_, self, _, _ := runtime.Caller(0)
+	paths, err := filepath.Glob(filepath.Join(filepath.Dir(self), "..", "..", "migrations", "*.up.sql"))
 	if err != nil || len(paths) == 0 {
 		t.Fatalf("migration files: %v", err)
 	}
 	for _, path := range paths {
-		sql, err := os.ReadFile(path)
+		sql, err := os.ReadFile(path) //nolint:gosec // G304: path comes from a fixed glob of this repository's migrations
 		if err != nil {
 			t.Fatal(err)
 		}

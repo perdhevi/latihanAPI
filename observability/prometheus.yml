@@ -1,0 +1,8 @@
+# Scrapes the API's admin port over the Compose network; the port is never
+# published to the host.
+global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: latihan-api
+    static_configs:
+      - targets: ["latihan-api:9090"]

@@ -4,12 +4,60 @@ on:
     
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Third-party actions are pinned to full commit SHAs: tags can be moved, SHAs cannot.
+# Dependabot keeps the SHAs and the trailing version comments up to date.
+env:
+  GOLANGCI_LINT_VERSION: v2.14.0
+  GOVULNCHECK_VERSION: v1.8.0
+
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Check go.mod and go.sum are tidy
+        run: go mod tidy -diff && (cd auth && go mod tidy -diff)
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+      # The auth contract is its own module, so it is linted separately.
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          working-directory: auth
+          args: --config ../.golangci.yml
+
+  vulnerabilities:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Reports only vulnerabilities reachable from our code, so a failure here is actionable.
+      - run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
+
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
         env:
           POSTGRES_DB: latihan_test
           POSTGRES_USER: latihan
@@ -21,17 +69,64 @@ jobs:
     env:
       TEST_DATABASE_URL: postgres://latihan:latihan@localhost:5432/latihan_test?sslmode=disable
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
-      - name: Check formatting
-        run: test -z "$(gofmt -l cmd internal)"
       - run: go mod download
-      - run: go vet ./...
       - run: go test -race ./...
+      - run: go test -race ./...
+        working-directory: auth
       - run: go test -race -count=1 -tags=integration ./...
       - run: go build ./...
-      - run: docker compose config --quiet
-      - run: docker build -t latihan-api:ci .
+
+  # Short fuzzing on every push; failing inputs are printed and should be
+  # committed under testdata/fuzz as regression tests.
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: sh scripts/fuzz.sh
+        env:
+          FUZZTIME: 15s
+
+  # Starts the real Compose stack and checks the quickstart end to end,
+  # including that the API's database role cannot change the schema.
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: cp .env.example .env
+      - run: docker compose up --build --detach --wait
+      - run: sh scripts/smoke-test.sh
+      - name: Disaster-recovery drill (backup, destroy, restore, verify)
+        run: sh scripts/backup-restore-test.sh
+      - name: Scan the image for fixable HIGH and CRITICAL vulnerabilities
+        run: |
+          docker save latihan-api:local -o image.tar
+          docker run --rm -v "$PWD/image.tar:/image.tar:ro" \
+            aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 \
+            image --input /image.tar --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL
+      - name: Production overlay is valid
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+        env:
+          DOMAIN: api.example.com
+          ACME_EMAIL: ci@example.com
+          BACKUP_AGE_RECIPIENT: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
+      - if: failure()
+        run: docker compose logs
+      - if: always()
+        run: docker compose down --volumes

@@ -1,14 +1,20 @@
 openapi: "3.0.3"
 info:
   title: "latihanApi"
-  version: "0.2.0"
-  description: "Personal sessions, plans, profiles and measurement history. /exercises has been removed. User IDs identify ownership but do not authenticate callers; restrict network access until authentication is added. All responses include X-Request-ID. Input bodies are limited to 1 MiB; unknown JSON fields, unknown/repeated query parameters and multiple JSON values are rejected. Strings are trimmed. PUT fully replaces editable fields; no upserts. UUIDs and creation timestamps are server-managed. HTTP method errors use the same Error schema."
+  version: "0.8.0"
+  description: "Personal sessions, plans, profiles and measurement history. /exercises has been removed. Single-record responses carry an ETag; PUT and DELETE accept If-Match for optimistic concurrency. Creating POSTs accept Idempotency-Key for safe retries. Lists use cursor pagination (limit, cursor, next_cursor). Requests are rate limited per client address, per account, and more strictly on /api/v1/auth; limited requests get 429 with Retry-After. Every /api/v1 operation except /api/v1/auth/* requires a bearer token from the configured provider. The /api/v1/auth endpoints and /.well-known/jwks.json exist only with the built-in jwt provider. POST /api/v1/users links the caller's identity to a new profile; other operations require that profile. Callers only ever see and change their own records: owners come from the token, never from input, and other users' records return 404. All responses include X-Request-ID. Input bodies are limited to 1 MiB; unknown JSON fields, unknown/repeated query parameters and multiple JSON values are rejected. Strings are trimmed. PUT fully replaces editable fields; no upserts. UUIDs and creation timestamps are server-managed. HTTP method errors use the same Error schema."
 servers:
   -
     url: "http://localhost:8080"
+security:
+  - bearerAuth: []
 tags:
   -
     name: "Health"
+  -
+    name: "Account"
+  -
+    name: "Auth"
   -
     name: "Sessions"
   -
@@ -21,6 +27,7 @@ paths:
   "/health":
     get:
       operationId: "health"
+      security: []
       tags:
         - "Health"
       summary: "Liveness independent of database availability"
@@ -34,6 +41,7 @@ paths:
   "/ready":
     get:
       operationId: "ready"
+      security: []
       tags:
         - "Health"
       summary: "PostgreSQL connectivity with a two-second deadline"
@@ -62,7 +70,22 @@ paths:
           "application/json":
             schema:
               "$ref": "#/components/schemas/SessionInput"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IdempotencyKey"
       responses:
+        "409":
+          "$ref": "#/components/responses/IdempotencyInProgress"
+        "422":
+          "$ref": "#/components/responses/IdempotencyKeyReused"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "201":
           description: "Created"
           content:
@@ -103,16 +126,8 @@ paths:
       tags:
         - "Sessions"
       summary: "List sessions"
-      description: "Required user_id filter. Newest performed_at first, then id DESC. No matches returns an empty items array."
+      description: "The caller's sessions, newest performed_at first, then id DESC. No matches returns an empty items array. user_id is not accepted."
       parameters:
-        -
-          name: "user_id"
-          in: "query"
-          required: true
-          schema:
-            type: "string"
-            format: "uuid"
-            description: "Nonzero UUID"
         -
           name: "limit"
           in: "query"
@@ -122,14 +137,21 @@ paths:
             maximum: 100
             default: 20
         -
-          name: "offset"
+          name: "cursor"
           in: "query"
+          description: "next_cursor from the previous page; omit for the first page. Opaque."
           schema:
-            type: "integer"
-            minimum: 0
-            maximum: 2147483647
-            default: 0
+            type: "string"
+            maxLength: 128
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Page"
           content:
@@ -140,7 +162,7 @@ paths:
                 required:
                   - "items"
                   - "limit"
-                  - "offset"
+                  - "next_cursor"
                 properties:
                   items:
                     type: "array"
@@ -148,8 +170,10 @@ paths:
                       "$ref": "#/components/schemas/Session"
                   limit:
                     type: "integer"
-                  offset:
-                    type: "integer"
+                  next_cursor:
+                    type: "string"
+                    nullable: true
+                    description: "Pass as cursor to get the next page; null on the last page."
         "400":
           description: "Invalid JSON, UUID, input, query, owner or plan reference."
           content:
@@ -178,6 +202,14 @@ paths:
         - "Sessions"
       summary: "Get session"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Found"
           content:
@@ -213,7 +245,22 @@ paths:
           "application/json":
             schema:
               "$ref": "#/components/schemas/SessionInput"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IfMatch"
       responses:
+        "412":
+          "$ref": "#/components/responses/PreconditionFailed"
+        "428":
+          "$ref": "#/components/responses/PreconditionRequired"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Updated"
           content:
@@ -255,7 +302,22 @@ paths:
       tags:
         - "Sessions"
       summary: "Delete session"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IfMatch"
       responses:
+        "412":
+          "$ref": "#/components/responses/PreconditionFailed"
+        "428":
+          "$ref": "#/components/responses/PreconditionRequired"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "204":
           description: "Deleted, no body"
         "400":
@@ -288,7 +350,22 @@ paths:
           "application/json":
             schema:
               "$ref": "#/components/schemas/PlanInput"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IdempotencyKey"
       responses:
+        "409":
+          "$ref": "#/components/responses/IdempotencyInProgress"
+        "422":
+          "$ref": "#/components/responses/IdempotencyKeyReused"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "201":
           description: "Created"
           content:
@@ -329,16 +406,8 @@ paths:
       tags:
         - "Plans"
       summary: "List plans"
-      description: "Required user_id filter. Newest created_at first, then id DESC. No matches returns an empty items array."
+      description: "The caller's plans, newest created_at first, then id DESC. No matches returns an empty items array. user_id is not accepted."
       parameters:
-        -
-          name: "user_id"
-          in: "query"
-          required: true
-          schema:
-            type: "string"
-            format: "uuid"
-            description: "Nonzero UUID"
         -
           name: "limit"
           in: "query"
@@ -348,14 +417,21 @@ paths:
             maximum: 100
             default: 20
         -
-          name: "offset"
+          name: "cursor"
           in: "query"
+          description: "next_cursor from the previous page; omit for the first page. Opaque."
           schema:
-            type: "integer"
-            minimum: 0
-            maximum: 2147483647
-            default: 0
+            type: "string"
+            maxLength: 128
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Page"
           content:
@@ -366,7 +442,7 @@ paths:
                 required:
                   - "items"
                   - "limit"
-                  - "offset"
+                  - "next_cursor"
                 properties:
                   items:
                     type: "array"
@@ -374,8 +450,10 @@ paths:
                       "$ref": "#/components/schemas/Plan"
                   limit:
                     type: "integer"
-                  offset:
-                    type: "integer"
+                  next_cursor:
+                    type: "string"
+                    nullable: true
+                    description: "Pass as cursor to get the next page; null on the last page."
         "400":
           description: "Invalid JSON, UUID, input, query, owner or plan reference."
           content:
@@ -404,6 +482,14 @@ paths:
         - "Plans"
       summary: "Get plan"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Found"
           content:
@@ -439,7 +525,22 @@ paths:
           "application/json":
             schema:
               "$ref": "#/components/schemas/PlanInput"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IfMatch"
       responses:
+        "412":
+          "$ref": "#/components/responses/PreconditionFailed"
+        "428":
+          "$ref": "#/components/responses/PreconditionRequired"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Updated"
           content:
@@ -481,7 +582,22 @@ paths:
       tags:
         - "Plans"
       summary: "Delete plan"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IfMatch"
       responses:
+        "412":
+          "$ref": "#/components/responses/PreconditionFailed"
+        "428":
+          "$ref": "#/components/responses/PreconditionRequired"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "204":
           description: "Deleted, no body"
         "400":
@@ -520,7 +636,24 @@ paths:
           "application/json":
             schema:
               "$ref": "#/components/schemas/UserInput"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IdempotencyKey"
       responses:
+        "422":
+          "$ref": "#/components/responses/IdempotencyKeyReused"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "409":
+          description: "This identity already has a profile."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "201":
           description: "Created"
           content:
@@ -562,16 +695,23 @@ paths:
         name: "userID"
         in: "path"
         required: true
+        description: "\"me\" or the caller's own user ID. Any other user ID returns 404."
         schema:
           type: "string"
-          format: "uuid"
-          description: "Nonzero UUID"
     get:
       operationId: "getUser"
       tags:
         - "Users"
       summary: "Get user"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Found"
           content:
@@ -607,7 +747,22 @@ paths:
           "application/json":
             schema:
               "$ref": "#/components/schemas/UserInput"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IfMatch"
       responses:
+        "412":
+          "$ref": "#/components/responses/PreconditionFailed"
+        "428":
+          "$ref": "#/components/responses/PreconditionRequired"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Updated"
           content:
@@ -649,7 +804,22 @@ paths:
       tags:
         - "Users"
       summary: "Delete user"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IfMatch"
       responses:
+        "412":
+          "$ref": "#/components/responses/PreconditionFailed"
+        "428":
+          "$ref": "#/components/responses/PreconditionRequired"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "204":
           description: "Deleted, no body"
         "400":
@@ -682,10 +852,9 @@ paths:
         name: "userID"
         in: "path"
         required: true
+        description: "\"me\" or the caller's own user ID. Any other user ID returns 404."
         schema:
           type: "string"
-          format: "uuid"
-          description: "Nonzero UUID"
     post:
       operationId: "createMeasurement"
       tags:
@@ -697,7 +866,28 @@ paths:
           "application/json":
             schema:
               "$ref": "#/components/schemas/MeasurementInput"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IdempotencyKey"
       responses:
+        "404":
+          description: "userID is neither \"me\" nor the caller's own ID."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "$ref": "#/components/responses/IdempotencyInProgress"
+        "422":
+          "$ref": "#/components/responses/IdempotencyKeyReused"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "201":
           description: "Created"
           content:
@@ -749,14 +939,21 @@ paths:
             maximum: 100
             default: 20
         -
-          name: "offset"
+          name: "cursor"
           in: "query"
+          description: "next_cursor from the previous page; omit for the first page. Opaque."
           schema:
-            type: "integer"
-            minimum: 0
-            maximum: 2147483647
-            default: 0
+            type: "string"
+            maxLength: 128
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Page"
           content:
@@ -767,7 +964,7 @@ paths:
                 required:
                   - "items"
                   - "limit"
-                  - "offset"
+                  - "next_cursor"
                 properties:
                   items:
                     type: "array"
@@ -775,8 +972,10 @@ paths:
                       "$ref": "#/components/schemas/Measurement"
                   limit:
                     type: "integer"
-                  offset:
-                    type: "integer"
+                  next_cursor:
+                    type: "string"
+                    nullable: true
+                    description: "Pass as cursor to get the next page; null on the last page."
         "400":
           description: "Invalid JSON, UUID, input, query, owner or plan reference."
           content:
@@ -801,10 +1000,9 @@ paths:
         name: "userID"
         in: "path"
         required: true
+        description: "\"me\" or the caller's own user ID. Any other user ID returns 404."
         schema:
           type: "string"
-          format: "uuid"
-          description: "Nonzero UUID"
       -
         name: "id"
         in: "path"
@@ -819,6 +1017,14 @@ paths:
         - "Measurements"
       summary: "Get measurement"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Found"
           content:
@@ -854,7 +1060,22 @@ paths:
           "application/json":
             schema:
               "$ref": "#/components/schemas/MeasurementInput"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IfMatch"
       responses:
+        "412":
+          "$ref": "#/components/responses/PreconditionFailed"
+        "428":
+          "$ref": "#/components/responses/PreconditionRequired"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Updated"
           content:
@@ -896,7 +1117,22 @@ paths:
       tags:
         - "Measurements"
       summary: "Delete measurement"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IfMatch"
       responses:
+        "412":
+          "$ref": "#/components/responses/PreconditionFailed"
+        "428":
+          "$ref": "#/components/responses/PreconditionRequired"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "204":
           description: "Deleted, no body"
         "400":
@@ -942,6 +1178,14 @@ paths:
             format: "uuid"
             description: "Nonzero UUID"
       responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
         "200":
           description: "Planned versus actual"
           content:
@@ -966,8 +1210,367 @@ paths:
             "application/json":
               schema:
                 "$ref": "#/components/schemas/Error"
+  "/api/v1/auth/register":
+    post:
+      operationId: "register"
+      tags:
+        - "Auth"
+      summary: "Create a built-in account (AUTH_PROVIDER=jwt only)"
+      description: "Returns tokens for the new account. Create the profile afterwards with POST /api/v1/users."
+      security: []
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/Credentials"
+      responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "201":
+          "$ref": "#/components/responses/Tokens"
+        "400":
+          description: "Invalid email, password length or body."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "409":
+          description: "An account with this email already exists."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/auth/login":
+    post:
+      operationId: "login"
+      tags:
+        - "Auth"
+      summary: "Exchange email and password for tokens (AUTH_PROVIDER=jwt only)"
+      description: "Unknown emails, wrong passwords and locked accounts get the same 401. Five consecutive failures lock the account for 15 minutes."
+      security: []
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/Credentials"
+      responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "200":
+          "$ref": "#/components/responses/Tokens"
+        "401":
+          description: "invalid_credentials"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/auth/refresh":
+    post:
+      operationId: "refresh"
+      tags:
+        - "Auth"
+      summary: "Rotate a refresh token (AUTH_PROVIDER=jwt only)"
+      description: "Each refresh token works once. Presenting a used one revokes every token of that session."
+      security: []
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/RefreshRequest"
+      responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "200":
+          "$ref": "#/components/responses/Tokens"
+        "401":
+          description: "invalid_refresh_token: unknown, expired, revoked or reused."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/auth/logout":
+    post:
+      operationId: "logout"
+      tags:
+        - "Auth"
+      summary: "Revoke a session's refresh tokens (AUTH_PROVIDER=jwt only)"
+      description: "Always 204. Access tokens already issued stay valid until they expire."
+      security: []
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/RefreshRequest"
+      responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "204":
+          description: "Revoked, or nothing to revoke"
+  "/.well-known/jwks.json":
+    get:
+      operationId: "jwks"
+      tags:
+        - "Auth"
+      summary: "Public keys that verify this service's access tokens (AUTH_PROVIDER=jwt only)"
+      security: []
+      responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "200":
+          description: "JSON Web Key Set"
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "keys"
+                properties:
+                  keys:
+                    type: "array"
+                    items:
+                      type: "object"
+  "/api/v1/account/export":
+    get:
+      operationId: "exportAccount"
+      tags:
+        - "Account"
+      summary: "Download everything the service holds about the caller"
+      description: "Profile, linked identities, all measurements, plans and sessions as one JSON document, streamed. Recorded in the audit log. Rate limited per user (RATE_LIMIT_EXPORT, default 4 per hour). If a read fails part-way the connection is aborted rather than sending an incomplete document."
+      responses:
+        "200":
+          description: "The export"
+          headers:
+            Content-Disposition:
+              schema:
+                type: "string"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/AccountExport"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/account":
+    delete:
+      operationId: "eraseAccount"
+      tags:
+        - "Account"
+      summary: "Erase the caller's data and account"
+      description: "Deletes the profile, identity links, measurements, plans, sessions and stored idempotency responses in one transaction, then the login account if the built-in provider holds it. Accounts at external identity providers must be deleted there. Works without a profile, so an interrupted erasure can be finished; repeating it is harmless. Backups keep erased data until they expire (see BACKUP_RETENTION_DAYS). The audit log keeps that an erasure happened, under a UUID that no longer identifies anyone."
+      responses:
+        "204":
+          description: "Erased, or nothing left to erase"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
 components:
+  parameters:
+    IdempotencyKey:
+      name: "Idempotency-Key"
+      in: "header"
+      required: false
+      description: "Client-generated key (1..255 visible ASCII), unique per intended action. Retries with the same key and body within 24 hours replay the first response with Idempotent-Replayed: true instead of creating another record. 5xx and 429 responses are not stored."
+      schema:
+        type: "string"
+        maxLength: 255
+    IfMatch:
+      name: "If-Match"
+      in: "header"
+      required: false
+      description: "ETag from the last read. The write applies only if the record is still at that version; otherwise 412. Optional unless the service sets REQUIRE_IF_MATCH."
+      schema:
+        type: "string"
+  securitySchemes:
+    bearerAuth:
+      type: "http"
+      scheme: "bearer"
+      bearerFormat: "JWT"
+      description: "Token from the configured AUTH_PROVIDER (Firebase ID token, Cognito access or ID token, or OIDC access token)."
+  responses:
+    PreconditionFailed:
+      description: "precondition_failed: the record changed since the ETag in If-Match was read. Fetch it again and retry."
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
+    PreconditionRequired:
+      description: "precondition_required: If-Match is mandatory on this deployment (REQUIRE_IF_MATCH=true)."
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
+    IdempotencyInProgress:
+      description: "idempotency_key_in_progress: a request with this key is still running. Retry-After gives the wait."
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
+    IdempotencyKeyReused:
+      description: "idempotency_key_reused: this key was already used for a different request."
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
+    RateLimited:
+      description: "rate_limited: too many requests from this address or account. Retry-After gives the wait in seconds."
+      headers:
+        Retry-After:
+          schema:
+            type: "integer"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
+    Tokens:
+      description: "Token pair. Sent with Cache-Control: no-store."
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/TokenResponse"
+    Unauthorized:
+      description: "Missing or invalid bearer token. WWW-Authenticate describes the challenge."
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: "string"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
+    ProfileRequired:
+      description: "Authenticated, but the identity has no profile yet. Create one with POST /api/v1/users."
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
+    ServiceUnavailable:
+      description: "The authentication provider could not verify the token (auth_unavailable), or the server is at its concurrent-request limit (overloaded, with Retry-After)."
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
   schemas:
+    Identity:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "issuer"
+        - "subject"
+        - "created_at"
+      properties:
+        issuer:
+          type: "string"
+        subject:
+          type: "string"
+        created_at:
+          type: "string"
+          format: "date-time"
+    AccountExport:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "format"
+        - "exported_at"
+        - "user"
+        - "identities"
+        - "measurements"
+        - "plans"
+        - "sessions"
+      properties:
+        format:
+          type: "string"
+          enum:
+            - "latihan-export/1"
+        exported_at:
+          type: "string"
+          format: "date-time"
+        user:
+          "$ref": "#/components/schemas/User"
+        identities:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/Identity"
+        measurements:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/Measurement"
+        plans:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/Plan"
+        sessions:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/Session"
+    Credentials:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "email"
+        - "password"
+      properties:
+        email:
+          type: "string"
+          maxLength: 254
+          description: "Plain address; case-insensitive"
+        password:
+          type: "string"
+          minLength: 12
+          maxLength: 128
+    RefreshRequest:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "refresh_token"
+      properties:
+        refresh_token:
+          type: "string"
+    TokenResponse:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "access_token"
+        - "token_type"
+        - "expires_in"
+        - "refresh_token"
+      properties:
+        access_token:
+          type: "string"
+          description: "EdDSA-signed JWT"
+        token_type:
+          type: "string"
+          enum:
+            - "Bearer"
+        expires_in:
+          type: "integer"
+          description: "Access token lifetime in seconds"
+        refresh_token:
+          type: "string"
+          description: "Opaque, single use"
     Set:
       type: "object"
       additionalProperties: false
@@ -1048,6 +1651,8 @@ components:
               type: "array"
               nullable: true
               maxItems: 0
+              items:
+                "$ref": "#/components/schemas/Set"
             minutes:
               type: "number"
               minimum: 0
@@ -1125,6 +1730,8 @@ components:
               type: "array"
               nullable: true
               maxItems: 0
+              items:
+                "$ref": "#/components/schemas/Set"
             minutes:
               type: "number"
               minimum: 0
@@ -1202,6 +1809,8 @@ components:
               type: "array"
               nullable: true
               maxItems: 0
+              items:
+                "$ref": "#/components/schemas/Set"
             minutes:
               type: "number"
               minimum: 0
@@ -1359,14 +1968,9 @@ components:
       type: "object"
       additionalProperties: false
       required:
-        - "user_id"
         - "name"
         - "exercises"
       properties:
-        user_id:
-          type: "string"
-          format: "uuid"
-          description: "Nonzero UUID"
         name:
           type: "string"
           maxLength: 200
@@ -1426,15 +2030,10 @@ components:
       type: "object"
       additionalProperties: false
       required:
-        - "user_id"
         - "name"
         - "performed_at"
         - "exercises"
       properties:
-        user_id:
-          type: "string"
-          format: "uuid"
-          description: "Nonzero UUID"
         name:
           type: "string"
           maxLength: 200
@@ -1458,7 +2057,7 @@ components:
           maxItems: 100
           items:
             "$ref": "#/components/schemas/SessionExercise"
-      description: "Full replacement; owner cannot change. Optional plan_id must belong to user_id. plan_exercise_id links each actual entry to an entry in its saved plan snapshot and must not repeat. Omitted plan_exercise_id means unplanned. Keeping the same plan_id retains the original snapshot; changing/reattaching captures the current plan; null/omitted plan_id detaches. Times are nonzero RFC3339."
+      description: "Full replacement. The owner is always the caller and is not part of the input. Optional plan_id must be one of the caller's plans. plan_exercise_id links each actual entry to an entry in its saved plan snapshot and must not repeat. Omitted plan_exercise_id means unplanned. Keeping the same plan_id retains the original snapshot; changing/reattaching captures the current plan; null/omitted plan_id detaches. Times are nonzero RFC3339."
     Session:
       type: "object"
       additionalProperties: false
@@ -1796,6 +2395,20 @@ components:
                 - "method_not_allowed"
                 - "not_ready"
                 - "internal_error"
+                - "unauthenticated"
+                - "profile_required"
+                - "profile_exists"
+                - "auth_unavailable"
+                - "rate_limited"
+                - "overloaded"
+                - "precondition_failed"
+                - "precondition_required"
+                - "idempotency_key_in_progress"
+                - "idempotency_key_reused"
+                - "invalid_idempotency_key"
+                - "email_taken"
+                - "invalid_credentials"
+                - "invalid_refresh_token"
             message:
               type: "string"
     Health:

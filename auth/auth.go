@@ -1,0 +1,172 @@
+// Package auth is the contract between latihanAPI and authentication providers.
+//
+// A provider verifies credentials and reports who the caller is. It never
+// decides what the caller may access: the service links identities to its own
+// users and enforces ownership itself.
+//
+// Providers register a Factory under a name, usually from an init function, and
+// the service selects one at startup with the AUTH_PROVIDER setting:
+//
+//	func init() { auth.Register("ldap", New) }
+//
+// This module depends only on the standard library so that providers living in
+// other repositories do not inherit the service's dependencies.
+package auth
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"slices"
+	"strings"
+	"sync"
+)
+
+// Identity is a caller vouched for by a provider. It says nothing about permissions.
+type Identity struct {
+	// Issuer identifies who vouched for the caller, such as
+	// "https://securetoken.google.com/my-project". Required.
+	Issuer string
+	// Subject is the issuer's stable, never-reused ID for the caller. Required.
+	Subject string
+	// Email is informational and may be empty. Never use it to link accounts
+	// unless EmailVerified is true.
+	Email         string
+	EmailVerified bool
+}
+
+// ErrUnauthenticated reports missing, malformed, expired or otherwise invalid
+// credentials. The service answers it with 401. Any other error from
+// Authenticate means the provider could not decide (for example, its key
+// server is unreachable) and is answered with 503.
+var ErrUnauthenticated = errors.New("auth: missing or invalid credentials")
+
+// Authenticator verifies the credentials on a request.
+type Authenticator interface {
+	Authenticate(r *http.Request) (Identity, error)
+}
+
+// IssuerBound is implemented by providers that accept tokens from exactly one
+// issuer. Only such providers can be combined in a comma-separated
+// AUTH_PROVIDER list, which routes each token by its "iss" claim.
+type IssuerBound interface {
+	Issuer() string
+}
+
+// AccountEraser is implemented by providers that keep accounts themselves, such
+// as the built-in provider. When a user erases their data, the service erases
+// its own records first, then asks the provider to delete the account behind
+// the identity. It must succeed when the account is already gone. Accounts at
+// external identity providers (Firebase, Cognito) are the client's to delete.
+type AccountEraser interface {
+	EraseAccount(ctx context.Context, id Identity) error
+}
+
+// RouteRegistrar is implemented by providers that serve their own endpoints,
+// such as login or key publication. The service mounts them without
+// authentication; the provider is responsible for protecting them.
+type RouteRegistrar interface {
+	RegisterRoutes(mux *http.ServeMux)
+}
+
+// Deps is what the service lends a provider at construction time.
+type Deps struct {
+	// Getenv reads configuration. Providers should use an AUTH_<NAME>_ prefix.
+	Getenv func(string) string
+	Logger *slog.Logger
+	// HTTPClient has sensible timeouts; use it for outbound calls such as key fetches.
+	HTTPClient *http.Client
+	// DB is the service's PostgreSQL database. Providers that store data use
+	// their own tables, created by migrations shipped with the provider.
+	DB *sql.DB
+}
+
+// Factory builds a provider. ctx bounds startup work such as fetching keys.
+type Factory func(ctx context.Context, deps Deps) (Authenticator, error)
+
+var (
+	mu        sync.RWMutex
+	factories = map[string]Factory{}
+)
+
+// Register makes a provider available under name. It panics if name is empty,
+// contains a comma, or is already registered, mirroring database/sql.Register:
+// two providers claiming one name is a build mistake that must not go unnoticed.
+func Register(name string, f Factory) {
+	if name == "" || strings.ContainsAny(name, ", ") || f == nil {
+		panic("auth: Register requires a non-empty name without commas or spaces and a non-nil factory")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if _, dup := factories[name]; dup {
+		panic("auth: provider " + name + " registered twice")
+	}
+	factories[name] = f
+}
+
+// Names lists the registered providers in sorted order.
+func Names() []string {
+	mu.RLock()
+	defer mu.RUnlock()
+	names := make([]string, 0, len(factories))
+	for name := range factories {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// New builds the provider registered under name. A comma-separated list builds
+// each listed provider and routes every token to the one whose Issuer matches
+// the token's "iss" claim, which lets a deployment move between providers
+// without logging everyone out at once.
+func New(ctx context.Context, name string, deps Deps) (Authenticator, error) {
+	if strings.Contains(name, ",") {
+		return newMulti(ctx, strings.Split(name, ","), deps)
+	}
+	mu.RLock()
+	f, ok := factories[name]
+	mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("auth: unknown provider %q (available: %s)", name, strings.Join(Names(), ", "))
+	}
+	a, err := f(ctx, deps)
+	if err != nil {
+		return nil, fmt.Errorf("auth: provider %q: %w", name, err)
+	}
+	if a == nil {
+		return nil, fmt.Errorf("auth: provider %q returned no authenticator", name)
+	}
+	return a, nil
+}
+
+// BearerToken extracts the token from an "Authorization: Bearer <token>" header
+// (RFC 6750). It reports false when the header is missing or malformed,
+// including tokens with characters outside the b64token grammar.
+func BearerToken(r *http.Request) (string, bool) {
+	scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") || !isB64Token(token) {
+		return "", false
+	}
+	return token, true
+}
+
+// isB64Token reports whether s matches RFC 6750's b64token:
+// 1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" ) *"=".
+func isB64Token(s string) bool {
+	body := strings.TrimRight(s, "=")
+	if body == "" {
+		return false
+	}
+	for _, c := range body {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', strings.ContainsRune("-._~+/", c):
+		default:
+			return false
+		}
+	}
+	return true
+}

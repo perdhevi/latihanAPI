@@ -7,3 +7,15 @@ coverage.out
 *.exe
 .tools/
 .cache/
+.keys/
+
+# Real deployment secrets (scripts/init-secrets.sh). secrets/dev is committed.
+/secrets/*
+!/secrets/dev/
+
+# Written by deploy/deploy.sh on the server.
+/deploy/.current
+/deploy/.previous
+
+# Encrypted database backups (deploy/backup).
+/backups/

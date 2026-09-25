@@ -1,66 +1,74 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"errors"
-	"github.com/google/uuid"
-	"io"
-	"latihanApi/internal/profile"
-	"latihanApi/internal/training"
-	"latihanApi/internal/validation"
 	"log/slog"
-	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/perdhevi/latihanAPI/auth"
+	"github.com/perdhevi/latihanAPI/internal/account"
+	"github.com/perdhevi/latihanAPI/internal/conditional"
+	"github.com/perdhevi/latihanAPI/internal/httpjson"
+	"github.com/perdhevi/latihanAPI/internal/idempotency"
+	"github.com/perdhevi/latihanAPI/internal/profile"
+	"github.com/perdhevi/latihanAPI/internal/telemetry"
+	"github.com/perdhevi/latihanAPI/internal/training"
+	"github.com/perdhevi/latihanAPI/internal/validation"
 )
 
-const maxBodyBytes = 1 << 20
+const maxBodyBytes = httpjson.MaxBodyBytes
 
-type errorResponse struct {
-	Error errorDetail `json:"error"`
-}
-type errorDetail struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
+type errorResponse = httpjson.ErrorResponse
 
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
+func writeJSON(w http.ResponseWriter, status int, value any) { httpjson.Write(w, status, value) }
 func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, errorResponse{Error: errorDetail{Code: code, Message: message}})
+	httpjson.Error(w, status, code, message)
 }
 
 type handlers struct {
 	training *training.Service
 	profiles *profile.Service
+	auth     auth.Authenticator
 	logger   *slog.Logger
+	limits   *limits
+	// requireIfMatch makes If-Match mandatory on updates and deletes.
+	requireIfMatch bool
+	// idempotency stores responses for Idempotency-Key retries; nil disables it.
+	idempotency *idempotency.Store
+	metrics     *telemetry.Metrics
+	account     *account.Store
 }
 
 func (h *handlers) fail(w http.ResponseWriter, r *http.Request, err error, resource string) {
 	var invalid *validation.Error
 	switch {
 	case errors.As(err, &invalid):
-		writeError(w, 400, "validation_failed", invalid.Message)
+		writeError(w, http.StatusBadRequest, "validation_failed", invalid.Message)
 	case errors.Is(err, profile.ErrNotFound), errors.Is(err, training.ErrNotFound):
-		writeError(w, 404, resource+"_not_found", resource+" not found")
+		writeError(w, http.StatusNotFound, resource+"_not_found", resource+" not found")
 	case errors.Is(err, profile.ErrUserMissing), errors.Is(err, training.ErrReference):
-		writeError(w, 400, "invalid_reference", "referenced user or plan does not exist for this user")
+		writeError(w, http.StatusBadRequest, "invalid_reference", "referenced user or plan does not exist for this user")
 	case errors.Is(err, profile.ErrConflict), errors.Is(err, training.ErrConflict):
-		writeError(w, 409, "resource_in_use", "remove dependent records before deleting this resource")
+		writeError(w, http.StatusConflict, "resource_in_use", "remove dependent records before deleting this resource")
+	case errors.Is(err, conditional.ErrPreconditionFailed):
+		writeError(w, http.StatusPreconditionFailed, "precondition_failed", "the record changed since you read it; fetch it again and retry")
+	case errors.Is(err, profile.ErrIdentityLinked):
+		writeError(w, http.StatusConflict, "profile_exists", "this identity already has a profile")
 	default:
 		h.logger.ErrorContext(r.Context(), "request failed", "request_id", r.Context().Value(requestIDKey{}), "error", err)
-		writeError(w, 500, "internal_error", "internal server error")
+		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
 	}
 }
 
 func parseUUID(w http.ResponseWriter, value string) (uuid.UUID, bool) {
 	id, err := uuid.Parse(value)
 	if err != nil || len(value) != 36 || id == uuid.Nil {
-		writeError(w, 400, "invalid_id", "ID must be a nonzero canonical UUID")
+		writeError(w, http.StatusBadRequest, "invalid_id", "ID must be a nonzero canonical UUID")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -69,42 +77,13 @@ func pathID(w http.ResponseWriter, r *http.Request, key string) (uuid.UUID, bool
 	return parseUUID(w, r.PathValue(key))
 }
 func decodeBody[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
-	var zero T
-	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || mediaType != "application/json" {
-		writeError(w, 415, "invalid_request", "Content-Type must be application/json")
-		return zero, false
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	var input *T
-	err = decoder.Decode(&input)
-	if err == nil {
-		var extra any
-		if e := decoder.Decode(&extra); e != io.EOF {
-			err = e
-			if err == nil {
-				err = errors.New("multiple JSON values")
-			}
-		}
-	}
-	if err != nil || input == nil {
-		var oversized *http.MaxBytesError
-		if errors.As(err, &oversized) {
-			writeError(w, 413, "invalid_request", "request body exceeds 1 MiB")
-		} else {
-			writeError(w, 400, "invalid_request", "body must be one JSON object with valid writable fields")
-		}
-		return zero, false
-	}
-	return *input, true
+	return httpjson.Decode[T](w, r)
 }
 
 func queryValues(w http.ResponseWriter, r *http.Request, allowed ...string) (url.Values, bool) {
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		writeError(w, 400, "invalid_request", "invalid query string")
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid query string")
 		return nil, false
 	}
 	for key, values := range q {
@@ -115,7 +94,7 @@ func queryValues(w http.ResponseWriter, r *http.Request, allowed ...string) (url
 			}
 		}
 		if !found || len(values) != 1 {
-			writeError(w, 400, "invalid_request", "unknown or repeated query parameter")
+			writeError(w, http.StatusBadRequest, "invalid_request", "unknown or repeated query parameter")
 			return nil, false
 		}
 	}
@@ -127,30 +106,56 @@ func pagination(w http.ResponseWriter, q url.Values) (validation.Page, bool) {
 	if q.Has("limit") {
 		p.Limit, err = strconv.Atoi(q.Get("limit"))
 		if err != nil {
-			writeError(w, 400, "invalid_request", "limit must be an integer")
+			writeError(w, http.StatusBadRequest, "invalid_request", "limit must be an integer")
 			return p, false
 		}
 	}
-	if q.Has("offset") {
-		p.Offset, err = strconv.Atoi(q.Get("offset"))
+	if q.Has("cursor") {
+		cursor, err := validation.DecodeCursor(q.Get("cursor"))
 		if err != nil {
-			writeError(w, 400, "invalid_request", "offset must be an integer")
+			writeError(w, http.StatusBadRequest, "validation_failed", err.Error())
 			return p, false
 		}
+		p.After = &cursor
 	}
 	if err := p.Validate(); err != nil {
-		writeError(w, 400, "validation_failed", err.Error())
+		writeError(w, http.StatusBadRequest, "validation_failed", err.Error())
 		return p, false
 	}
 	return p, true
 }
-func writePage[T any](w http.ResponseWriter, items []T, page validation.Page) {
+
+// writePage writes one page. Repositories return up to Limit+1 items; the extra
+// one only signals that next_cursor is needed. position gives an item's cursor.
+func writePage[T any](w http.ResponseWriter, items []T, page validation.Page, position func(T) validation.Cursor) {
 	if items == nil {
 		items = make([]T, 0)
 	}
-	writeJSON(w, 200, struct {
-		Items  []T `json:"items"`
-		Limit  int `json:"limit"`
-		Offset int `json:"offset"`
-	}{items, page.Limit, page.Offset})
+	var next *string
+	if len(items) > page.Limit {
+		items = items[:page.Limit]
+		cursor := position(items[len(items)-1]).Encode()
+		next = &cursor
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Items      []T     `json:"items"`
+		Limit      int     `json:"limit"`
+		NextCursor *string `json:"next_cursor"`
+	}{items, page.Limit, next})
+}
+
+// ifMatch reads If-Match for a write to an existing record. Without the
+// header the write is unconditional, unless the service requires it (428).
+func (h *handlers) ifMatch(w http.ResponseWriter, r *http.Request) (conditional.Match, bool) {
+	header := r.Header.Get("If-Match")
+	if header == "" && h.requireIfMatch {
+		writeError(w, http.StatusPreconditionRequired, "precondition_required", "send If-Match with the ETag from your last read")
+		return conditional.Any, false
+	}
+	return conditional.ParseIfMatch(header), true
+}
+
+// setETag labels a single-record response with its version for If-Match.
+func setETag(w http.ResponseWriter, updatedAt time.Time) {
+	w.Header().Set("ETag", conditional.ETag(updatedAt))
 }
