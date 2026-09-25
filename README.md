@@ -716,12 +716,19 @@ statement timeouts, keyset index use, and cross-user access: an intruder holding
 another user's records gets 404 on every route and the records stay unchanged. Every built-in provider also runs the
 `auth/authtest` conformance suite against a fake TLS identity provider.
 
-CI runs three jobs: **lint** (tidy modules, golangci-lint with gosec and other
+CI has five jobs: **lint** (tidy modules, golangci-lint with gosec and other
 security linters, formatting), **vulnerabilities** (govulncheck; fails only on
-vulnerabilities reachable from this code), and **test** (race-enabled unit and
-integration tests, build, Compose validation, Docker build). Actions are pinned to
-commit SHAs and Dependabot updates Go modules, actions and base images weekly.
-Linter configuration lives in `.golangci.yml`.
+vulnerabilities reachable from this code), **test** (race-enabled unit and
+integration tests, including the OpenAPI contract checks), **fuzz** (15s per fuzz
+target), and **smoke** (the Compose stack end to end, the database-role checks,
+the disaster-recovery drill and a Trivy image scan). Actions are pinned to commit
+SHAs and Dependabot updates Go modules, actions and base images weekly. Linter
+configuration lives in `.golangci.yml`.
+
+**CI currently runs only when started by hand** (Actions → CI → Run workflow).
+To run it on every push and pull request, add `push:` and `pull_request:` under
+`on:` in [.github/workflows/ci.yml](.github/workflows/ci.yml). The Release
+workflow is separate and still runs on `v*` tags.
 
 ### Beyond example-based tests
 
