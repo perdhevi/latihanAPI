@@ -10,11 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/perdhevi/latihanAPI/internal/idempotency"
 	"github.com/perdhevi/latihanAPI/internal/ratelimit"
 )
 
-// Options holds the abuse limits. The zero value disables them all, which
-// suits tests; the service always passes the configured values.
+// Options holds the abuse limits and HTTP semantics. The zero value disables
+// them all, which suits tests; the service always passes the configured values.
 type Options struct {
 	// PerIP limits every client address (IPv6 per /64) across all routes but
 	// the health checks.
@@ -29,6 +30,10 @@ type Options struct {
 	MaxInFlight int
 	// TrustedProxies may set X-Forwarded-For. Empty trusts no one.
 	TrustedProxies []netip.Prefix
+	// RequireIfMatch rejects updates and deletes without If-Match (428).
+	RequireIfMatch bool
+	// Idempotency enables Idempotency-Key on creating POSTs. Nil disables it.
+	Idempotency *idempotency.Store
 }
 
 type limits struct {

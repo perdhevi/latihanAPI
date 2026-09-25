@@ -1,8 +1,8 @@
 openapi: "3.0.3"
 info:
   title: "latihanApi"
-  version: "0.6.0"
-  description: "Personal sessions, plans, profiles and measurement history. /exercises has been removed. Lists use cursor pagination (limit, cursor, next_cursor). Requests are rate limited per client address, per account, and more strictly on /api/v1/auth; limited requests get 429 with Retry-After. Every /api/v1 operation except /api/v1/auth/* requires a bearer token from the configured provider. The /api/v1/auth endpoints and /.well-known/jwks.json exist only with the built-in jwt provider. POST /api/v1/users links the caller's identity to a new profile; other operations require that profile. Callers only ever see and change their own records: owners come from the token, never from input, and other users' records return 404. All responses include X-Request-ID. Input bodies are limited to 1 MiB; unknown JSON fields, unknown/repeated query parameters and multiple JSON values are rejected. Strings are trimmed. PUT fully replaces editable fields; no upserts. UUIDs and creation timestamps are server-managed. HTTP method errors use the same Error schema."
+  version: "0.7.0"
+  description: "Personal sessions, plans, profiles and measurement history. /exercises has been removed. Single-record responses carry an ETag; PUT and DELETE accept If-Match for optimistic concurrency. Creating POSTs accept Idempotency-Key for safe retries. Lists use cursor pagination (limit, cursor, next_cursor). Requests are rate limited per client address, per account, and more strictly on /api/v1/auth; limited requests get 429 with Retry-After. Every /api/v1 operation except /api/v1/auth/* requires a bearer token from the configured provider. The /api/v1/auth endpoints and /.well-known/jwks.json exist only with the built-in jwt provider. POST /api/v1/users links the caller's identity to a new profile; other operations require that profile. Callers only ever see and change their own records: owners come from the token, never from input, and other users' records return 404. All responses include X-Request-ID. Input bodies are limited to 1 MiB; unknown JSON fields, unknown/repeated query parameters and multiple JSON values are rejected. Strings are trimmed. PUT fully replaces editable fields; no upserts. UUIDs and creation timestamps are server-managed. HTTP method errors use the same Error schema."
 servers:
   -
     url: "http://localhost:8080"
@@ -68,7 +68,14 @@ paths:
           "application/json":
             schema:
               "$ref": "#/components/schemas/SessionInput"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IdempotencyKey"
       responses:
+        "409":
+          "$ref": "#/components/responses/IdempotencyInProgress"
+        "422":
+          "$ref": "#/components/responses/IdempotencyKeyReused"
         "429":
           "$ref": "#/components/responses/RateLimited"
         "401":
@@ -236,7 +243,14 @@ paths:
           "application/json":
             schema:
               "$ref": "#/components/schemas/SessionInput"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IfMatch"
       responses:
+        "412":
+          "$ref": "#/components/responses/PreconditionFailed"
+        "428":
+          "$ref": "#/components/responses/PreconditionRequired"
         "429":
           "$ref": "#/components/responses/RateLimited"
         "401":
@@ -286,7 +300,14 @@ paths:
       tags:
         - "Sessions"
       summary: "Delete session"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IfMatch"
       responses:
+        "412":
+          "$ref": "#/components/responses/PreconditionFailed"
+        "428":
+          "$ref": "#/components/responses/PreconditionRequired"
         "429":
           "$ref": "#/components/responses/RateLimited"
         "401":
@@ -327,7 +348,14 @@ paths:
           "application/json":
             schema:
               "$ref": "#/components/schemas/PlanInput"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IdempotencyKey"
       responses:
+        "409":
+          "$ref": "#/components/responses/IdempotencyInProgress"
+        "422":
+          "$ref": "#/components/responses/IdempotencyKeyReused"
         "429":
           "$ref": "#/components/responses/RateLimited"
         "401":
@@ -495,7 +523,14 @@ paths:
           "application/json":
             schema:
               "$ref": "#/components/schemas/PlanInput"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IfMatch"
       responses:
+        "412":
+          "$ref": "#/components/responses/PreconditionFailed"
+        "428":
+          "$ref": "#/components/responses/PreconditionRequired"
         "429":
           "$ref": "#/components/responses/RateLimited"
         "401":
@@ -545,7 +580,14 @@ paths:
       tags:
         - "Plans"
       summary: "Delete plan"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IfMatch"
       responses:
+        "412":
+          "$ref": "#/components/responses/PreconditionFailed"
+        "428":
+          "$ref": "#/components/responses/PreconditionRequired"
         "429":
           "$ref": "#/components/responses/RateLimited"
         "401":
@@ -592,7 +634,12 @@ paths:
           "application/json":
             schema:
               "$ref": "#/components/schemas/UserInput"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IdempotencyKey"
       responses:
+        "422":
+          "$ref": "#/components/responses/IdempotencyKeyReused"
         "429":
           "$ref": "#/components/responses/RateLimited"
         "401":
@@ -698,7 +745,14 @@ paths:
           "application/json":
             schema:
               "$ref": "#/components/schemas/UserInput"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IfMatch"
       responses:
+        "412":
+          "$ref": "#/components/responses/PreconditionFailed"
+        "428":
+          "$ref": "#/components/responses/PreconditionRequired"
         "429":
           "$ref": "#/components/responses/RateLimited"
         "401":
@@ -748,7 +802,14 @@ paths:
       tags:
         - "Users"
       summary: "Delete user"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IfMatch"
       responses:
+        "412":
+          "$ref": "#/components/responses/PreconditionFailed"
+        "428":
+          "$ref": "#/components/responses/PreconditionRequired"
         "429":
           "$ref": "#/components/responses/RateLimited"
         "401":
@@ -803,7 +864,14 @@ paths:
           "application/json":
             schema:
               "$ref": "#/components/schemas/MeasurementInput"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IdempotencyKey"
       responses:
+        "409":
+          "$ref": "#/components/responses/IdempotencyInProgress"
+        "422":
+          "$ref": "#/components/responses/IdempotencyKeyReused"
         "429":
           "$ref": "#/components/responses/RateLimited"
         "401":
@@ -984,7 +1052,14 @@ paths:
           "application/json":
             schema:
               "$ref": "#/components/schemas/MeasurementInput"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IfMatch"
       responses:
+        "412":
+          "$ref": "#/components/responses/PreconditionFailed"
+        "428":
+          "$ref": "#/components/responses/PreconditionRequired"
         "429":
           "$ref": "#/components/responses/RateLimited"
         "401":
@@ -1034,7 +1109,14 @@ paths:
       tags:
         - "Measurements"
       summary: "Delete measurement"
+      parameters:
+        -
+          "$ref": "#/components/parameters/IfMatch"
       responses:
+        "412":
+          "$ref": "#/components/responses/PreconditionFailed"
+        "428":
+          "$ref": "#/components/responses/PreconditionRequired"
         "429":
           "$ref": "#/components/responses/RateLimited"
         "401":
@@ -1244,6 +1326,22 @@ paths:
                     items:
                       type: "object"
 components:
+  parameters:
+    IdempotencyKey:
+      name: "Idempotency-Key"
+      in: "header"
+      required: false
+      description: "Client-generated key (1..255 visible ASCII), unique per intended action. Retries with the same key and body within 24 hours replay the first response with Idempotent-Replayed: true instead of creating another record. 5xx and 429 responses are not stored."
+      schema:
+        type: "string"
+        maxLength: 255
+    IfMatch:
+      name: "If-Match"
+      in: "header"
+      required: false
+      description: "ETag from the last read. The write applies only if the record is still at that version; otherwise 412. Optional unless the service sets REQUIRE_IF_MATCH."
+      schema:
+        type: "string"
   securitySchemes:
     bearerAuth:
       type: "http"
@@ -1251,6 +1349,30 @@ components:
       bearerFormat: "JWT"
       description: "Token from the configured AUTH_PROVIDER (Firebase ID token, Cognito access or ID token, or OIDC access token)."
   responses:
+    PreconditionFailed:
+      description: "precondition_failed: the record changed since the ETag in If-Match was read. Fetch it again and retry."
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
+    PreconditionRequired:
+      description: "precondition_required: If-Match is mandatory on this deployment (REQUIRE_IF_MATCH=true)."
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
+    IdempotencyInProgress:
+      description: "idempotency_key_in_progress: a request with this key is still running. Retry-After gives the wait."
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
+    IdempotencyKeyReused:
+      description: "idempotency_key_reused: this key was already used for a different request."
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
     RateLimited:
       description: "rate_limited: too many requests from this address or account. Retry-After gives the wait in seconds."
       headers:

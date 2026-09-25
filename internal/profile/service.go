@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/perdhevi/latihanAPI/internal/conditional"
 	"github.com/perdhevi/latihanAPI/internal/validation"
 )
 
@@ -12,13 +13,13 @@ type Repository interface {
 	CreateUser(context.Context, uuid.UUID, UserInput, Identity) (User, error)
 	ResolveIdentity(context.Context, Identity) (uuid.UUID, error)
 	GetUser(context.Context, uuid.UUID) (User, error)
-	UpdateUser(context.Context, uuid.UUID, UserInput) (User, error)
-	DeleteUser(context.Context, uuid.UUID) error
+	UpdateUser(ctx context.Context, id uuid.UUID, in UserInput, match conditional.Match) (User, error)
+	DeleteUser(ctx context.Context, id uuid.UUID, match conditional.Match) error
 	CreateMeasurement(context.Context, uuid.UUID, uuid.UUID, MeasurementInput) (Measurement, error)
 	GetMeasurement(context.Context, uuid.UUID, uuid.UUID) (Measurement, error)
 	ListMeasurements(context.Context, uuid.UUID, validation.Page) ([]Measurement, error)
-	UpdateMeasurement(context.Context, uuid.UUID, uuid.UUID, MeasurementInput) (Measurement, error)
-	DeleteMeasurement(context.Context, uuid.UUID, uuid.UUID) error
+	UpdateMeasurement(ctx context.Context, userID, id uuid.UUID, in MeasurementInput, match conditional.Match) (Measurement, error)
+	DeleteMeasurement(ctx context.Context, userID, id uuid.UUID, match conditional.Match) error
 }
 
 type Service struct{ repo Repository }
@@ -40,14 +41,14 @@ func (s *Service) ResolveIdentity(ctx context.Context, id Identity) (uuid.UUID, 
 func (s *Service) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
 	return s.repo.GetUser(ctx, id)
 }
-func (s *Service) UpdateUser(ctx context.Context, id uuid.UUID, in UserInput) (User, error) {
+func (s *Service) UpdateUser(ctx context.Context, id uuid.UUID, in UserInput, match conditional.Match) (User, error) {
 	if err := validation.Text("display_name", &in.DisplayName, 200, true); err != nil {
 		return User{}, err
 	}
-	return s.repo.UpdateUser(ctx, id, in)
+	return s.repo.UpdateUser(ctx, id, in, match)
 }
-func (s *Service) DeleteUser(ctx context.Context, id uuid.UUID) error {
-	return s.repo.DeleteUser(ctx, id)
+func (s *Service) DeleteUser(ctx context.Context, id uuid.UUID, match conditional.Match) error {
+	return s.repo.DeleteUser(ctx, id, match)
 }
 func (s *Service) CreateMeasurement(ctx context.Context, userID uuid.UUID, in MeasurementInput) (Measurement, error) {
 	if err := validateMeasurement(in); err != nil {
@@ -68,13 +69,13 @@ func (s *Service) ListMeasurements(ctx context.Context, userID uuid.UUID, page v
 	}
 	return s.repo.ListMeasurements(ctx, userID, page)
 }
-func (s *Service) UpdateMeasurement(ctx context.Context, userID, id uuid.UUID, in MeasurementInput) (Measurement, error) {
+func (s *Service) UpdateMeasurement(ctx context.Context, userID, id uuid.UUID, in MeasurementInput, match conditional.Match) (Measurement, error) {
 	if err := validateMeasurement(in); err != nil {
 		return Measurement{}, err
 	}
 	in.MeasuredAt = in.MeasuredAt.UTC()
-	return s.repo.UpdateMeasurement(ctx, userID, id, in)
+	return s.repo.UpdateMeasurement(ctx, userID, id, in, match)
 }
-func (s *Service) DeleteMeasurement(ctx context.Context, userID, id uuid.UUID) error {
-	return s.repo.DeleteMeasurement(ctx, userID, id)
+func (s *Service) DeleteMeasurement(ctx context.Context, userID, id uuid.UUID, match conditional.Match) error {
+	return s.repo.DeleteMeasurement(ctx, userID, id, match)
 }

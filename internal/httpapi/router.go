@@ -18,7 +18,7 @@ type Pinger interface{ Ping(context.Context) error }
 // registers itself (such as login) are public.
 func NewRouter(sessions *training.Service, profiles *profile.Service, db Pinger, authenticator auth.Authenticator, logger *slog.Logger, opts Options) http.Handler {
 	l := newLimits(opts)
-	h := &handlers{training: sessions, profiles: profiles, auth: authenticator, logger: logger, limits: l}
+	h := &handlers{training: sessions, profiles: profiles, auth: authenticator, logger: logger, limits: l, requireIfMatch: opts.RequireIfMatch, idempotency: opts.Idempotency}
 	mux := http.NewServeMux()
 	// Provider routes get their own mux so the stricter public limit can be
 	// applied to exactly the routes the provider mounted.
@@ -39,22 +39,22 @@ func NewRouter(sessions *training.Service, profiles *profile.Service, db Pinger,
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("GET /api/v1/sessions", h.withUser(h.listSessions))
-	mux.HandleFunc("POST /api/v1/sessions", h.withUser(h.createSession))
+	mux.HandleFunc("POST /api/v1/sessions", h.withUser(h.idempotent(h.createSession)))
 	mux.HandleFunc("GET /api/v1/sessions/{id}", h.withUser(h.getSession))
 	mux.HandleFunc("PUT /api/v1/sessions/{id}", h.withUser(h.updateSession))
 	mux.HandleFunc("DELETE /api/v1/sessions/{id}", h.withUser(h.deleteSession))
 	mux.HandleFunc("GET /api/v1/plans", h.withUser(h.listPlans))
-	mux.HandleFunc("POST /api/v1/plans", h.withUser(h.createPlan))
+	mux.HandleFunc("POST /api/v1/plans", h.withUser(h.idempotent(h.createPlan)))
 	mux.HandleFunc("GET /api/v1/plans/{id}", h.withUser(h.getPlan))
 	mux.HandleFunc("PUT /api/v1/plans/{id}", h.withUser(h.updatePlan))
 	mux.HandleFunc("DELETE /api/v1/plans/{id}", h.withUser(h.deletePlan))
 	mux.HandleFunc("GET /api/v1/plans/{id}/comparison", h.withUser(h.comparison))
-	mux.HandleFunc("POST /api/v1/users", h.authenticated(h.createUser))
+	mux.HandleFunc("POST /api/v1/users", h.authenticated(h.idempotent(h.createUser)))
 	mux.HandleFunc("GET /api/v1/users/{userID}", h.withUser(h.getUser))
 	mux.HandleFunc("PUT /api/v1/users/{userID}", h.withUser(h.updateUser))
 	mux.HandleFunc("DELETE /api/v1/users/{userID}", h.withUser(h.deleteUser))
 	mux.HandleFunc("GET /api/v1/users/{userID}/measurements", h.withUser(h.listMeasurements))
-	mux.HandleFunc("POST /api/v1/users/{userID}/measurements", h.withUser(h.createMeasurement))
+	mux.HandleFunc("POST /api/v1/users/{userID}/measurements", h.withUser(h.idempotent(h.createMeasurement)))
 	mux.HandleFunc("GET /api/v1/users/{userID}/measurements/{id}", h.withUser(h.getMeasurement))
 	mux.HandleFunc("PUT /api/v1/users/{userID}/measurements/{id}", h.withUser(h.updateMeasurement))
 	mux.HandleFunc("DELETE /api/v1/users/{userID}/measurements/{id}", h.withUser(h.deleteMeasurement))

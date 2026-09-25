@@ -19,6 +19,7 @@ func (h *handlers) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Location", "/api/v1/users/"+user.ID.String())
+	setETag(w, user.UpdatedAt)
 	writeJSON(w, http.StatusCreated, user)
 }
 func (h *handlers) getUser(w http.ResponseWriter, r *http.Request) {
@@ -31,9 +32,14 @@ func (h *handlers) getUser(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "user")
 		return
 	}
+	setETag(w, user.UpdatedAt)
 	writeJSON(w, http.StatusOK, user)
 }
 func (h *handlers) updateUser(w http.ResponseWriter, r *http.Request) {
+	match, ok := h.ifMatch(w, r)
+	if !ok {
+		return
+	}
 	id, ok := ownUserID(w, r)
 	if !ok {
 		return
@@ -42,19 +48,24 @@ func (h *handlers) updateUser(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	user, err := h.profiles.UpdateUser(r.Context(), id, in)
+	user, err := h.profiles.UpdateUser(r.Context(), id, in, match)
 	if err != nil {
 		h.fail(w, r, err, "user")
 		return
 	}
+	setETag(w, user.UpdatedAt)
 	writeJSON(w, http.StatusOK, user)
 }
 func (h *handlers) deleteUser(w http.ResponseWriter, r *http.Request) {
+	match, ok := h.ifMatch(w, r)
+	if !ok {
+		return
+	}
 	id, ok := ownUserID(w, r)
 	if !ok {
 		return
 	}
-	if err := h.profiles.DeleteUser(r.Context(), id); err != nil {
+	if err := h.profiles.DeleteUser(r.Context(), id, match); err != nil {
 		h.fail(w, r, err, "user")
 		return
 	}
@@ -75,6 +86,7 @@ func (h *handlers) createMeasurement(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Location", "/api/v1/users/"+userID.String()+"/measurements/"+m.ID.String())
+	setETag(w, m.UpdatedAt)
 	writeJSON(w, http.StatusCreated, m)
 }
 func (h *handlers) getMeasurement(w http.ResponseWriter, r *http.Request) {
@@ -91,9 +103,14 @@ func (h *handlers) getMeasurement(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "measurement")
 		return
 	}
+	setETag(w, m.UpdatedAt)
 	writeJSON(w, http.StatusOK, m)
 }
 func (h *handlers) updateMeasurement(w http.ResponseWriter, r *http.Request) {
+	match, ok := h.ifMatch(w, r)
+	if !ok {
+		return
+	}
 	userID, ok := ownUserID(w, r)
 	if !ok {
 		return
@@ -106,14 +123,19 @@ func (h *handlers) updateMeasurement(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	m, err := h.profiles.UpdateMeasurement(r.Context(), userID, id, in)
+	m, err := h.profiles.UpdateMeasurement(r.Context(), userID, id, in, match)
 	if err != nil {
 		h.fail(w, r, err, "measurement")
 		return
 	}
+	setETag(w, m.UpdatedAt)
 	writeJSON(w, http.StatusOK, m)
 }
 func (h *handlers) deleteMeasurement(w http.ResponseWriter, r *http.Request) {
+	match, ok := h.ifMatch(w, r)
+	if !ok {
+		return
+	}
 	userID, ok := ownUserID(w, r)
 	if !ok {
 		return
@@ -122,7 +144,7 @@ func (h *handlers) deleteMeasurement(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.profiles.DeleteMeasurement(r.Context(), userID, id); err != nil {
+	if err := h.profiles.DeleteMeasurement(r.Context(), userID, id, match); err != nil {
 		h.fail(w, r, err, "measurement")
 		return
 	}

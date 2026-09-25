@@ -382,6 +382,45 @@ with pagination; it does not overwrite or merge previous measurements.
 - Request headers are capped at 16 KiB (`MaxHeaderBytes`; Go adds 4 KiB of slack, so
   requests with about 20 KiB of headers or more get 431).
 
+## Safe retries
+
+Mobile networks drop responses, and two devices can edit the same record. Both
+mechanisms below are opt-in per request, so existing clients keep working.
+
+**Idempotency-Key on creating POSTs** (`/users`, `/plans`, `/sessions`,
+`/users/me/measurements`). Send a random key per intended action and reuse it
+when retrying:
+
+```sh
+curl -X POST http://localhost:8080/api/v1/sessions -H "Authorization: Bearer $TOKEN" \n  -H 'Content-Type: application/json' -H 'Idempotency-Key: 6f1c2a9e-2b54-4f0e-9d3a-7c1e5b0a8d42' -d .json
+```
+
+| Retry with the same key | Result |
+| --- | --- |
+| Same body, first request finished | The stored status, body, `Location` and `ETag`, plus `Idempotent-Replayed: true`. Nothing is created. |
+| First request still running | 409 `idempotency_key_in_progress` with `Retry-After`. |
+| Different body or endpoint | 422 `idempotency_key_reused`. |
+| First request got 5xx or 429 | Runs again; those outcomes are not stored. |
+
+Keys are private to the caller's identity and kept for 24 hours (purged hourly).
+A claim whose request died mid-way is taken over after a minute. One gap remains:
+the record and the stored response are written in separate transactions, so a
+process crash between the two lets a retry run the request again.
+
+**ETag and If-Match on PUT and DELETE** (plans, sessions, `/users/me`,
+measurements). Every single-record response carries an `ETag`. Send it back:
+
+```sh
+curl -X PUT http://localhost:8080/api/v1/plans/PLAN_UUID -H "Authorization: Bearer $TOKEN" \n  -H 'Content-Type: application/json' -H 'If-Match: "hmm8doc5yf"' -d .json
+```
+
+If someone changed the record since that read, the answer is 412
+`precondition_failed` and nothing is written: fetch it again, merge, retry. The
+version check runs inside the `UPDATE`/`DELETE` itself (sessions check it under a
+row lock), so of two writers holding the same ETag exactly one succeeds. `*`
+matches any version; weak ETags never match. Without `If-Match` the write applies
+to the current version, unless `REQUIRE_IF_MATCH=true`, which answers 428.
+
 ## Abuse limits
 
 Every limit has a default, so a fresh deployment is protected; tune them in `.env`.
@@ -438,6 +477,8 @@ the log level and `AUTH_*` settings come from `.env`.
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `AUTH_PROVIDER` | Required | `jwt`, `firebase`, `cognito`, `oidc`, or a comma-separated list; see [Authentication](#authentication) and `.env.example` |
 | `AUTH_*` | Provider-specific | Settings for the selected provider |
+| `REQUIRE_IF_MATCH` | `false` | Reject PUT and DELETE without `If-Match` (428); see [Safe retries](#safe-retries) |
+| Abuse limits | See [Abuse limits](#abuse-limits) | `RATE_LIMIT_*`, `MAX_IN_FLIGHT`, `TRUSTED_PROXIES`, `DB_*` |
 | `TEST_DATABASE_URL` | Required for integration tests | Disposable test database |
 
 Without Make (PowerShell):
@@ -482,8 +523,9 @@ Indexes support actual per-user history ordering and foreign-key deletion checks
 
 UUIDs avoid sequential-ID dependencies. APIs currently generate IDs; persistence
 can accept UUIDs without schema changes for future offline work. There is no sync
-engine, optimistic concurrency token, or idempotency key yet. Concurrent replacements
-use the last successful write. Hard deletion is explicit and future tombstones need
+engine yet. Concurrent replacements are guarded by ETag and If-Match, and retried
+creates by Idempotency-Key (see [Safe retries](#safe-retries)); a write without
+If-Match still replaces whatever version is current. Hard deletion is explicit and future tombstones need
 a separate migration and sync contract.
 
 ## Testing
@@ -506,7 +548,8 @@ The integration tag fails if its database URL is missing. Tests cover CRUD,
 ownership constraints, stable plan snapshots, plan changes/detachment, comparison
 metrics, missing/unplanned exercises, history ordering, pagination, cancellation,
 deletion conflicts, migration rollback/reapplication, identity linking, the 401/403/409/503
-authentication responses, the built-in provider end to end (register, profile,
+authentication responses, safe retries (exact replay, key reuse, in-progress and abandoned keys, parallel
+retries creating one record; stale and concurrent If-Match writes), the built-in provider end to end (register, profile,
 refresh, reuse detection, logout; concurrent refreshes of one token), abuse limits (per-IP,
 per-user and auth-route limits, spoofed `X-Forwarded-For`, IPv6 /64 grouping, load
 shedding), cursor pagination across ties and concurrent inserts, PostgreSQL-enforced

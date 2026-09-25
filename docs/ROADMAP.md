@@ -29,7 +29,7 @@ VM: Caddy (TLS :443) → latihan-api → PostgreSQL   (only Caddy publishes port
 | phase-03 | Authorization | Owner comes from the token only (`user_id` removed from input, `/users/me`); owner-scoped SQL; 404 for other users' records; cross-user test suite | Done |
 | phase-04 | Built-in token issuer | `jwt` provider: register/login/refresh/logout, Ed25519 keys with rotation, argon2id, refresh-token rotation with reuse detection, lockout; multiple providers at once; zero-account Compose quickstart | Done |
 | phase-05 | Abuse resistance | Per-IP (IPv6 /64), per-user and auth-route rate limits (429 + `Retry-After`), trusted-proxy client IPs, in-flight cap, cursor pagination, PostgreSQL statement/lock/idle timeouts, 16 KiB header cap, `Cache-Control: no-store` | Done |
-| phase-06 | Safe retries | `Idempotency-Key` on POST, `ETag` / `If-Match` on PUT | Planned |
+| phase-06 | Safe retries | `Idempotency-Key` on creating POSTs (replay, 409 in progress, 422 reuse, 24h TTL); `ETag` + optional `If-Match` on PUT/DELETE with the check inside the SQL write; `REQUIRE_IF_MATCH` | Done |
 | phase-07 | Observability | OpenTelemetry traces and metrics, panic stacks, admin port for metrics/pprof | Planned |
 | phase-08 | Secrets, TLS, least privilege | `*_FILE` secrets, Caddy TLS, `sslmode=verify-full`, migrator/app DB roles, optional Postgres row-level security as a second ownership layer | Planned |
 | phase-09 | Shipping | Distroless image by digest, SBOM, cosign, hardened Compose, VM baseline, deploy workflow | Planned |

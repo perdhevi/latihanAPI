@@ -19,6 +19,7 @@ import (
 	"github.com/perdhevi/latihanAPI/internal/config"
 	"github.com/perdhevi/latihanAPI/internal/database"
 	"github.com/perdhevi/latihanAPI/internal/httpapi"
+	"github.com/perdhevi/latihanAPI/internal/idempotency"
 	"github.com/perdhevi/latihanAPI/internal/profile"
 	"github.com/perdhevi/latihanAPI/internal/training"
 )
@@ -62,9 +63,12 @@ func run() error {
 	logger.Info("authentication provider ready", "provider", cfg.AuthProvider)
 	sessions := training.NewService(training.NewPostgresRepository(pool))
 	profiles := profile.NewService(profile.NewPostgresRepository(pool))
+	keys := idempotency.NewStore(pool)
+	go purgeExpiredKeys(ctx, keys, logger)
 	server := newServer(cfg.HTTPAddr, httpapi.NewRouter(sessions, profiles, pool, authenticator, logger, httpapi.Options{
 		PerIP: cfg.RateLimitIP, PerUser: cfg.RateLimitUser, Public: cfg.RateLimitAuth,
-		MaxInFlight: cfg.MaxInFlight, TrustedProxies: cfg.TrustedProxies,
+		MaxInFlight: cfg.MaxInFlight, TrustedProxies: cfg.TrustedProxies, RequireIfMatch: cfg.RequireIfMatch,
+		Idempotency: keys,
 	}))
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.ListenAndServe() }()
@@ -123,5 +127,24 @@ func newServer(addr string, handler http.Handler) *http.Server {
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
+	}
+}
+
+// purgeExpiredKeys deletes idempotency keys past their TTL every hour until
+// ctx ends at shutdown.
+func purgeExpiredKeys(ctx context.Context, keys *idempotency.Store, logger *slog.Logger) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if n, err := keys.Purge(ctx); err != nil {
+				logger.WarnContext(ctx, "purging idempotency keys failed", "error", err)
+			} else if n > 0 {
+				logger.InfoContext(ctx, "purged idempotency keys", "count", n)
+			}
+		}
 	}
 }

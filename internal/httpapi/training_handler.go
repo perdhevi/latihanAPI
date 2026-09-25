@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/perdhevi/latihanAPI/internal/conditional"
 	"github.com/perdhevi/latihanAPI/internal/training"
 	"github.com/perdhevi/latihanAPI/internal/validation"
 )
@@ -14,12 +15,13 @@ func (h *handlers) createPlan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	plan, err := h.training.SavePlan(r.Context(), owner(r), uuid.Nil, in, true)
+	plan, err := h.training.SavePlan(r.Context(), owner(r), uuid.Nil, in, true, conditional.Any)
 	if err != nil {
 		h.fail(w, r, err, "plan")
 		return
 	}
 	w.Header().Set("Location", "/api/v1/plans/"+plan.ID.String())
+	setETag(w, plan.UpdatedAt)
 	writeJSON(w, http.StatusCreated, plan)
 }
 func (h *handlers) getPlan(w http.ResponseWriter, r *http.Request) {
@@ -32,9 +34,14 @@ func (h *handlers) getPlan(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "plan")
 		return
 	}
+	setETag(w, plan.UpdatedAt)
 	writeJSON(w, http.StatusOK, plan)
 }
 func (h *handlers) updatePlan(w http.ResponseWriter, r *http.Request) {
+	match, ok := h.ifMatch(w, r)
+	if !ok {
+		return
+	}
 	id, ok := pathID(w, r, "id")
 	if !ok {
 		return
@@ -43,19 +50,24 @@ func (h *handlers) updatePlan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	plan, err := h.training.SavePlan(r.Context(), owner(r), id, in, false)
+	plan, err := h.training.SavePlan(r.Context(), owner(r), id, in, false, match)
 	if err != nil {
 		h.fail(w, r, err, "plan")
 		return
 	}
+	setETag(w, plan.UpdatedAt)
 	writeJSON(w, http.StatusOK, plan)
 }
 func (h *handlers) deletePlan(w http.ResponseWriter, r *http.Request) {
+	match, ok := h.ifMatch(w, r)
+	if !ok {
+		return
+	}
 	id, ok := pathID(w, r, "id")
 	if !ok {
 		return
 	}
-	if err := h.training.DeletePlan(r.Context(), owner(r), id); err != nil {
+	if err := h.training.DeletePlan(r.Context(), owner(r), id, match); err != nil {
 		h.fail(w, r, err, "plan")
 		return
 	}
@@ -102,12 +114,13 @@ func (h *handlers) createSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	session, err := h.training.SaveSession(r.Context(), owner(r), uuid.Nil, in, true)
+	session, err := h.training.SaveSession(r.Context(), owner(r), uuid.Nil, in, true, conditional.Any)
 	if err != nil {
 		h.fail(w, r, err, "session")
 		return
 	}
 	w.Header().Set("Location", "/api/v1/sessions/"+session.ID.String())
+	setETag(w, session.UpdatedAt)
 	writeJSON(w, http.StatusCreated, session)
 }
 func (h *handlers) getSession(w http.ResponseWriter, r *http.Request) {
@@ -120,9 +133,14 @@ func (h *handlers) getSession(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "session")
 		return
 	}
+	setETag(w, session.UpdatedAt)
 	writeJSON(w, http.StatusOK, session)
 }
 func (h *handlers) updateSession(w http.ResponseWriter, r *http.Request) {
+	match, ok := h.ifMatch(w, r)
+	if !ok {
+		return
+	}
 	id, ok := pathID(w, r, "id")
 	if !ok {
 		return
@@ -131,19 +149,24 @@ func (h *handlers) updateSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	session, err := h.training.SaveSession(r.Context(), owner(r), id, in, false)
+	session, err := h.training.SaveSession(r.Context(), owner(r), id, in, false, match)
 	if err != nil {
 		h.fail(w, r, err, "session")
 		return
 	}
+	setETag(w, session.UpdatedAt)
 	writeJSON(w, http.StatusOK, session)
 }
 func (h *handlers) deleteSession(w http.ResponseWriter, r *http.Request) {
+	match, ok := h.ifMatch(w, r)
+	if !ok {
+		return
+	}
 	id, ok := pathID(w, r, "id")
 	if !ok {
 		return
 	}
-	if err := h.training.DeleteSession(r.Context(), owner(r), id); err != nil {
+	if err := h.training.DeleteSession(r.Context(), owner(r), id, match); err != nil {
 		h.fail(w, r, err, "session")
 		return
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/perdhevi/latihanAPI/internal/conditional"
 	"github.com/perdhevi/latihanAPI/internal/validation"
 )
 
@@ -123,13 +124,13 @@ type serviceRepo struct {
 	err     error
 }
 
-func (r *serviceRepo) SavePlan(ctx context.Context, p Plan, create bool) (Plan, error) {
+func (r *serviceRepo) SavePlan(ctx context.Context, p Plan, create bool, _ conditional.Match) (Plan, error) {
 	r.ctx = ctx
 	r.plan = p
 	r.calls++
 	return p, r.err
 }
-func (r *serviceRepo) SaveSession(ctx context.Context, owner, id uuid.UUID, in SessionInput, create bool) (Session, error) {
+func (r *serviceRepo) SaveSession(ctx context.Context, owner, id uuid.UUID, in SessionInput, create bool, _ conditional.Match) (Session, error) {
 	r.ctx = ctx
 	r.session = in
 	r.calls++
@@ -140,15 +141,15 @@ func TestServiceValidationAndContext(t *testing.T) {
 	s := NewService(repo)
 	ctx := t.Context()
 	user := uuid.New()
-	p, err := s.SavePlan(ctx, user, uuid.Nil, PlanInput{Name: "  Leg day  ", Exercises: []ExerciseInput{strength(" Squat ", 8, 50)}}, true)
+	p, err := s.SavePlan(ctx, user, uuid.Nil, PlanInput{Name: "  Leg day  ", Exercises: []ExerciseInput{strength(" Squat ", 8, 50)}}, true, conditional.Any)
 	if err != nil || p.ID == uuid.Nil || p.UserID != user || p.Exercises[0].ID == uuid.Nil || p.Name != "Leg day" || p.Exercises[0].Name != "Squat" || repo.ctx != ctx {
 		t.Fatalf("save plan: %+v %v", p, err)
 	}
-	_, err = s.SaveSession(ctx, user, uuid.Nil, SessionInput{Name: "Done", Exercises: []SessionExercise{{ExerciseInput: strength("Squat", 8, 50)}}}, true)
+	_, err = s.SaveSession(ctx, user, uuid.Nil, SessionInput{Name: "Done", Exercises: []SessionExercise{{ExerciseInput: strength("Squat", 8, 50)}}}, true, conditional.Any)
 	if err == nil || repo.calls != 1 {
 		t.Fatal("missing performed_at reached repository")
 	}
-	_, err = s.SavePlan(ctx, uuid.Nil, uuid.Nil, PlanInput{Name: "Bad", Exercises: []ExerciseInput{strength("Squat", 8, 50)}}, true)
+	_, err = s.SavePlan(ctx, uuid.Nil, uuid.Nil, PlanInput{Name: "Bad", Exercises: []ExerciseInput{strength("Squat", 8, 50)}}, true, conditional.Any)
 	if !errors.Is(err, errNoOwner) || repo.calls != 1 {
 		t.Fatal("missing owner reached repository")
 	}
@@ -157,7 +158,7 @@ func TestServiceValidationAndContext(t *testing.T) {
 	}
 	failure := errors.New("database unavailable")
 	repo.err = failure
-	_, err = s.SaveSession(ctx, user, uuid.Nil, SessionInput{Name: "Done", PerformedAt: time.Now(), Exercises: []SessionExercise{{ExerciseInput: strength("Squat", 8, 50)}}}, true)
+	_, err = s.SaveSession(ctx, user, uuid.Nil, SessionInput{Name: "Done", PerformedAt: time.Now(), Exercises: []SessionExercise{{ExerciseInput: strength("Squat", 8, 50)}}}, true, conditional.Any)
 	if !errors.Is(err, failure) || repo.ctx != ctx {
 		t.Fatal("repository error or context lost")
 	}

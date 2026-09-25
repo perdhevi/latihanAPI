@@ -6,11 +6,14 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/perdhevi/latihanAPI/auth"
+	"github.com/perdhevi/latihanAPI/internal/conditional"
 	"github.com/perdhevi/latihanAPI/internal/httpjson"
+	"github.com/perdhevi/latihanAPI/internal/idempotency"
 	"github.com/perdhevi/latihanAPI/internal/profile"
 	"github.com/perdhevi/latihanAPI/internal/training"
 	"github.com/perdhevi/latihanAPI/internal/validation"
@@ -31,6 +34,10 @@ type handlers struct {
 	auth     auth.Authenticator
 	logger   *slog.Logger
 	limits   *limits
+	// requireIfMatch makes If-Match mandatory on updates and deletes.
+	requireIfMatch bool
+	// idempotency stores responses for Idempotency-Key retries; nil disables it.
+	idempotency *idempotency.Store
 }
 
 func (h *handlers) fail(w http.ResponseWriter, r *http.Request, err error, resource string) {
@@ -44,6 +51,8 @@ func (h *handlers) fail(w http.ResponseWriter, r *http.Request, err error, resou
 		writeError(w, http.StatusBadRequest, "invalid_reference", "referenced user or plan does not exist for this user")
 	case errors.Is(err, profile.ErrConflict), errors.Is(err, training.ErrConflict):
 		writeError(w, http.StatusConflict, "resource_in_use", "remove dependent records before deleting this resource")
+	case errors.Is(err, conditional.ErrPreconditionFailed):
+		writeError(w, http.StatusPreconditionFailed, "precondition_failed", "the record changed since you read it; fetch it again and retry")
 	case errors.Is(err, profile.ErrIdentityLinked):
 		writeError(w, http.StatusConflict, "profile_exists", "this identity already has a profile")
 	default:
@@ -129,4 +138,20 @@ func writePage[T any](w http.ResponseWriter, items []T, page validation.Page, po
 		Limit      int     `json:"limit"`
 		NextCursor *string `json:"next_cursor"`
 	}{items, page.Limit, next})
+}
+
+// ifMatch reads If-Match for a write to an existing record. Without the
+// header the write is unconditional, unless the service requires it (428).
+func (h *handlers) ifMatch(w http.ResponseWriter, r *http.Request) (conditional.Match, bool) {
+	header := r.Header.Get("If-Match")
+	if header == "" && h.requireIfMatch {
+		writeError(w, http.StatusPreconditionRequired, "precondition_required", "send If-Match with the ETag from your last read")
+		return conditional.Any, false
+	}
+	return conditional.ParseIfMatch(header), true
+}
+
+// setETag labels a single-record response with its version for If-Match.
+func setETag(w http.ResponseWriter, updatedAt time.Time) {
+	w.Header().Set("ETag", conditional.ETag(updatedAt))
 }
