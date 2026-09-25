@@ -4,13 +4,14 @@ package testdb
 
 import (
 	"context"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Open creates an isolated schema and applies the repository's actual migrations.
@@ -54,7 +55,7 @@ func Open(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("migration files: %v", err)
 	}
 	for _, path := range paths {
-		sql, err := os.ReadFile(path)
+		sql, err := os.ReadFile(path) //nolint:gosec // G304: path comes from a fixed glob of this repository's migrations
 		if err != nil {
 			t.Fatal(err)
 		}

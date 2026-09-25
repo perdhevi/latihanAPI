@@ -1,0 +1,40 @@
+version: "2"
+
+run:
+  build-tags:
+    - integration
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose # unclosed HTTP response bodies leak connections
+    - errorlint # wrapped errors must be compared with errors.Is/As
+    - gosec # security-focused checks
+    - noctx # outbound requests and queries must carry a context
+    - rowserrcheck # rows.Err() must be checked after iteration
+    - sqlclosecheck # rows and statements must be closed
+    - usestdlibvars # http.StatusBadRequest instead of 400
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # readability over struct packing
+        - shadow # `err` shadowing is idiomatic in this codebase
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      # Tests use fixed fixtures and ignore errors from cleanup helpers.
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/perdhevi/latihanAPI

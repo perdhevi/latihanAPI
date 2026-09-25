@@ -1,9 +1,11 @@
 package httpapi
 
 import (
-	"github.com/google/uuid"
-	"github.com/perdhevi/latihanAPI/internal/training"
 	"net/http"
+
+	"github.com/google/uuid"
+
+	"github.com/perdhevi/latihanAPI/internal/training"
 )
 
 func (h *handlers) createPlan(w http.ResponseWriter, r *http.Request) {
@@ -17,7 +19,7 @@ func (h *handlers) createPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Location", "/api/v1/plans/"+plan.ID.String())
-	writeJSON(w, 201, plan)
+	writeJSON(w, http.StatusCreated, plan)
 }
 func (h *handlers) getPlan(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "id")
@@ -29,7 +31,7 @@ func (h *handlers) getPlan(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "plan")
 		return
 	}
-	writeJSON(w, 200, plan)
+	writeJSON(w, http.StatusOK, plan)
 }
 func (h *handlers) updatePlan(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "id")
@@ -45,7 +47,7 @@ func (h *handlers) updatePlan(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "plan")
 		return
 	}
-	writeJSON(w, 200, plan)
+	writeJSON(w, http.StatusOK, plan)
 }
 func (h *handlers) deletePlan(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "id")
@@ -56,7 +58,7 @@ func (h *handlers) deletePlan(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "plan")
 		return
 	}
-	w.WriteHeader(204)
+	w.WriteHeader(http.StatusNoContent)
 }
 func (h *handlers) listPlans(w http.ResponseWriter, r *http.Request) {
 	q, ok := queryValues(w, r, "user_id", "limit", "offset")
@@ -96,7 +98,7 @@ func (h *handlers) comparison(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "comparison")
 		return
 	}
-	writeJSON(w, 200, result)
+	writeJSON(w, http.StatusOK, result)
 }
 func (h *handlers) createSession(w http.ResponseWriter, r *http.Request) {
 	in, ok := decodeBody[training.SessionInput](w, r)
@@ -109,7 +111,7 @@ func (h *handlers) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Location", "/api/v1/sessions/"+session.ID.String())
-	writeJSON(w, 201, session)
+	writeJSON(w, http.StatusCreated, session)
 }
 func (h *handlers) getSession(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "id")
@@ -121,7 +123,7 @@ func (h *handlers) getSession(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "session")
 		return
 	}
-	writeJSON(w, 200, session)
+	writeJSON(w, http.StatusOK, session)
 }
 func (h *handlers) updateSession(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "id")
@@ -137,7 +139,7 @@ func (h *handlers) updateSession(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "session")
 		return
 	}
-	writeJSON(w, 200, session)
+	writeJSON(w, http.StatusOK, session)
 }
 func (h *handlers) deleteSession(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "id")
@@ -148,7 +150,7 @@ func (h *handlers) deleteSession(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "session")
 		return
 	}
-	w.WriteHeader(204)
+	w.WriteHeader(http.StatusNoContent)
 }
 func (h *handlers) listSessions(w http.ResponseWriter, r *http.Request) {
 	q, ok := queryValues(w, r, "user_id", "limit", "offset")

@@ -2,10 +2,12 @@ package training
 
 import (
 	"errors"
-	"github.com/google/uuid"
-	"github.com/perdhevi/latihanAPI/internal/validation"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/perdhevi/latihanAPI/internal/validation"
 )
 
 var ErrNotFound = errors.New("session or plan not found")

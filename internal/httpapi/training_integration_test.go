@@ -6,17 +6,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/google/uuid"
-	"github.com/perdhevi/latihanAPI/internal/profile"
-	"github.com/perdhevi/latihanAPI/internal/testdb"
-	"github.com/perdhevi/latihanAPI/internal/training"
-	"github.com/perdhevi/latihanAPI/internal/validation"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/perdhevi/latihanAPI/internal/profile"
+	"github.com/perdhevi/latihanAPI/internal/testdb"
+	"github.com/perdhevi/latihanAPI/internal/training"
+	"github.com/perdhevi/latihanAPI/internal/validation"
 )
 
 func number(v float64) *float64 { return &v }

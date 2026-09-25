@@ -3,11 +3,12 @@ package training
 import (
 	"context"
 	"errors"
-	"github.com/google/uuid"
 	"math"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func ptr[T any](v T) *T { return &v }

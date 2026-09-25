@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/perdhevi/latihanAPI/internal/validation"
 )
 
@@ -112,7 +114,7 @@ func (r *PostgresRepository) SaveSession(ctx context.Context, id uuid.UUID, in S
 	if err != nil {
 		return Session{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after a successful Commit
 	var snapshot *Plan
 	if !create {
 		previous, err := scanSession(tx.QueryRow(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE id=$1 FOR UPDATE`, id))

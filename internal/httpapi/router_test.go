@@ -5,15 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/google/uuid"
-	"github.com/perdhevi/latihanAPI/internal/profile"
-	"github.com/perdhevi/latihanAPI/internal/training"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/perdhevi/latihanAPI/internal/profile"
+	"github.com/perdhevi/latihanAPI/internal/training"
 )
 
 type testPinger struct {
@@ -42,7 +44,7 @@ func testRouter(repo *fakeTraining, p *testPinger) http.Handler {
 	return NewRouter(training.NewService(repo), profile.NewService(nil), p, slog.New(slog.NewJSONHandler(io.Discard, nil)))
 }
 func request(h http.Handler, method, path, body string) *httptest.ResponseRecorder {
-	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	r := httptest.NewRequestWithContext(context.Background(), method, path, strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -134,12 +136,12 @@ func TestErrorPrivacyAndContext(t *testing.T) {
 	h := testRouter(repo, &testPinger{})
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	r := httptest.NewRequest("GET", "/api/v1/sessions/"+uuid.NewString(), nil).WithContext(ctx)
+	r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/sessions/"+uuid.NewString(), nil)
 	h.ServeHTTP(httptest.NewRecorder(), r)
 	if !errors.Is(repo.ctx.Err(), context.Canceled) {
 		t.Fatal("cancellation lost")
 	}
-	r = httptest.NewRequest("POST", "/api/v1/users", strings.NewReader(`{}`))
+	r = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/users", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if w.Code != 415 {

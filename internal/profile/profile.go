@@ -2,9 +2,11 @@ package profile
 
 import (
 	"errors"
-	"github.com/google/uuid"
-	"github.com/perdhevi/latihanAPI/internal/validation"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/perdhevi/latihanAPI/internal/validation"
 )
 
 var ErrNotFound = errors.New("profile or measurement not found")

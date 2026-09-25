@@ -1,8 +1,9 @@
 package httpapi
 
 import (
-	"github.com/perdhevi/latihanAPI/internal/profile"
 	"net/http"
+
+	"github.com/perdhevi/latihanAPI/internal/profile"
 )
 
 func (h *handlers) createUser(w http.ResponseWriter, r *http.Request) {
@@ -16,7 +17,7 @@ func (h *handlers) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Location", "/api/v1/users/"+user.ID.String())
-	writeJSON(w, 201, user)
+	writeJSON(w, http.StatusCreated, user)
 }
 func (h *handlers) getUser(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "userID")
@@ -28,7 +29,7 @@ func (h *handlers) getUser(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "user")
 		return
 	}
-	writeJSON(w, 200, user)
+	writeJSON(w, http.StatusOK, user)
 }
 func (h *handlers) updateUser(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "userID")
@@ -44,7 +45,7 @@ func (h *handlers) updateUser(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "user")
 		return
 	}
-	writeJSON(w, 200, user)
+	writeJSON(w, http.StatusOK, user)
 }
 func (h *handlers) deleteUser(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "userID")
@@ -55,7 +56,7 @@ func (h *handlers) deleteUser(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "user")
 		return
 	}
-	w.WriteHeader(204)
+	w.WriteHeader(http.StatusNoContent)
 }
 func (h *handlers) createMeasurement(w http.ResponseWriter, r *http.Request) {
 	userID, ok := pathID(w, r, "userID")
@@ -72,7 +73,7 @@ func (h *handlers) createMeasurement(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Location", "/api/v1/users/"+userID.String()+"/measurements/"+m.ID.String())
-	writeJSON(w, 201, m)
+	writeJSON(w, http.StatusCreated, m)
 }
 func (h *handlers) getMeasurement(w http.ResponseWriter, r *http.Request) {
 	userID, ok := pathID(w, r, "userID")
@@ -88,7 +89,7 @@ func (h *handlers) getMeasurement(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "measurement")
 		return
 	}
-	writeJSON(w, 200, m)
+	writeJSON(w, http.StatusOK, m)
 }
 func (h *handlers) updateMeasurement(w http.ResponseWriter, r *http.Request) {
 	userID, ok := pathID(w, r, "userID")
@@ -108,7 +109,7 @@ func (h *handlers) updateMeasurement(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "measurement")
 		return
 	}
-	writeJSON(w, 200, m)
+	writeJSON(w, http.StatusOK, m)
 }
 func (h *handlers) deleteMeasurement(w http.ResponseWriter, r *http.Request) {
 	userID, ok := pathID(w, r, "userID")
@@ -123,7 +124,7 @@ func (h *handlers) deleteMeasurement(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err, "measurement")
 		return
 	}
-	w.WriteHeader(204)
+	w.WriteHeader(http.StatusNoContent)
 }
 func (h *handlers) listMeasurements(w http.ResponseWriter, r *http.Request) {
 	userID, ok := pathID(w, r, "userID")

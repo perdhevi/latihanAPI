@@ -3,16 +3,18 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
-	"github.com/google/uuid"
-	"github.com/perdhevi/latihanAPI/internal/profile"
-	"github.com/perdhevi/latihanAPI/internal/training"
-	"github.com/perdhevi/latihanAPI/internal/validation"
 	"io"
 	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
+
+	"github.com/google/uuid"
+
+	"github.com/perdhevi/latihanAPI/internal/profile"
+	"github.com/perdhevi/latihanAPI/internal/training"
+	"github.com/perdhevi/latihanAPI/internal/validation"
 )
 
 const maxBodyBytes = 1 << 20
@@ -44,23 +46,23 @@ func (h *handlers) fail(w http.ResponseWriter, r *http.Request, err error, resou
 	var invalid *validation.Error
 	switch {
 	case errors.As(err, &invalid):
-		writeError(w, 400, "validation_failed", invalid.Message)
+		writeError(w, http.StatusBadRequest, "validation_failed", invalid.Message)
 	case errors.Is(err, profile.ErrNotFound), errors.Is(err, training.ErrNotFound):
-		writeError(w, 404, resource+"_not_found", resource+" not found")
+		writeError(w, http.StatusNotFound, resource+"_not_found", resource+" not found")
 	case errors.Is(err, profile.ErrUserMissing), errors.Is(err, training.ErrReference):
-		writeError(w, 400, "invalid_reference", "referenced user or plan does not exist for this user")
+		writeError(w, http.StatusBadRequest, "invalid_reference", "referenced user or plan does not exist for this user")
 	case errors.Is(err, profile.ErrConflict), errors.Is(err, training.ErrConflict):
-		writeError(w, 409, "resource_in_use", "remove dependent records before deleting this resource")
+		writeError(w, http.StatusConflict, "resource_in_use", "remove dependent records before deleting this resource")
 	default:
 		h.logger.ErrorContext(r.Context(), "request failed", "request_id", r.Context().Value(requestIDKey{}), "error", err)
-		writeError(w, 500, "internal_error", "internal server error")
+		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
 	}
 }
 
 func parseUUID(w http.ResponseWriter, value string) (uuid.UUID, bool) {
 	id, err := uuid.Parse(value)
 	if err != nil || len(value) != 36 || id == uuid.Nil {
-		writeError(w, 400, "invalid_id", "ID must be a nonzero canonical UUID")
+		writeError(w, http.StatusBadRequest, "invalid_id", "ID must be a nonzero canonical UUID")
 		return uuid.Nil, false
 	}
 	return id, true
@@ -72,7 +74,7 @@ func decodeBody[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
 	var zero T
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
-		writeError(w, 415, "invalid_request", "Content-Type must be application/json")
+		writeError(w, http.StatusUnsupportedMediaType, "invalid_request", "Content-Type must be application/json")
 		return zero, false
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
@@ -92,9 +94,9 @@ func decodeBody[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
 	if err != nil || input == nil {
 		var oversized *http.MaxBytesError
 		if errors.As(err, &oversized) {
-			writeError(w, 413, "invalid_request", "request body exceeds 1 MiB")
+			writeError(w, http.StatusRequestEntityTooLarge, "invalid_request", "request body exceeds 1 MiB")
 		} else {
-			writeError(w, 400, "invalid_request", "body must be one JSON object with valid writable fields")
+			writeError(w, http.StatusBadRequest, "invalid_request", "body must be one JSON object with valid writable fields")
 		}
 		return zero, false
 	}
@@ -104,7 +106,7 @@ func decodeBody[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
 func queryValues(w http.ResponseWriter, r *http.Request, allowed ...string) (url.Values, bool) {
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		writeError(w, 400, "invalid_request", "invalid query string")
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid query string")
 		return nil, false
 	}
 	for key, values := range q {
@@ -115,7 +117,7 @@ func queryValues(w http.ResponseWriter, r *http.Request, allowed ...string) (url
 			}
 		}
 		if !found || len(values) != 1 {
-			writeError(w, 400, "invalid_request", "unknown or repeated query parameter")
+			writeError(w, http.StatusBadRequest, "invalid_request", "unknown or repeated query parameter")
 			return nil, false
 		}
 	}
@@ -127,19 +129,19 @@ func pagination(w http.ResponseWriter, q url.Values) (validation.Page, bool) {
 	if q.Has("limit") {
 		p.Limit, err = strconv.Atoi(q.Get("limit"))
 		if err != nil {
-			writeError(w, 400, "invalid_request", "limit must be an integer")
+			writeError(w, http.StatusBadRequest, "invalid_request", "limit must be an integer")
 			return p, false
 		}
 	}
 	if q.Has("offset") {
 		p.Offset, err = strconv.Atoi(q.Get("offset"))
 		if err != nil {
-			writeError(w, 400, "invalid_request", "offset must be an integer")
+			writeError(w, http.StatusBadRequest, "invalid_request", "offset must be an integer")
 			return p, false
 		}
 	}
 	if err := p.Validate(); err != nil {
-		writeError(w, 400, "validation_failed", err.Error())
+		writeError(w, http.StatusBadRequest, "validation_failed", err.Error())
 		return p, false
 	}
 	return p, true
@@ -148,7 +150,7 @@ func writePage[T any](w http.ResponseWriter, items []T, page validation.Page) {
 	if items == nil {
 		items = make([]T, 0)
 	}
-	writeJSON(w, 200, struct {
+	writeJSON(w, http.StatusOK, struct {
 		Items  []T `json:"items"`
 		Limit  int `json:"limit"`
 		Offset int `json:"offset"`
