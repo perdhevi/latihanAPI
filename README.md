@@ -504,7 +504,7 @@ Set `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318` in `.env` to send traces.
 
 | Metric | Labels | Meaning |
 | --- | --- | --- |
-| `latihan_http_requests_total` | `route`, `method`, `code` | Requests. `route` is the pattern, such as `/api/v1/sessions/{id}`, never the raw path |
+| `latihan_http_requests_total` | `route`, `method`, `code` | Requests. `route` is the pattern, such as `/api/v1/sessions/{id}`, never the raw path; `none` for requests refused before routing (429, 503) |
 | `latihan_http_request_duration_seconds` | `route`, `method` | Latency histogram |
 | `latihan_http_requests_in_flight` | | Requests being served |
 | `latihan_http_rejected_total` | `reason` | Refused before a handler: `ip`, `user`, `public`, `overloaded`, `too_many_clients` |
@@ -678,6 +678,51 @@ vulnerabilities reachable from this code), and **test** (race-enabled unit and
 integration tests, build, Compose validation, Docker build). Actions are pinned to
 commit SHAs and Dependabot updates Go modules, actions and base images weekly.
 Linter configuration lives in `.golangci.yml`.
+
+### Beyond example-based tests
+
+**Fuzzing.** Twelve fuzz targets cover everything that parses untrusted input:
+JSON bodies, bearer tokens and multi-provider routing, `X-Forwarded-For`, cursors,
+`If-Match`, rate-limit policies, emails, stored password hashes, JWKs, text
+validation and the plan comparison. Each checks an invariant, not just "no
+panic": for example, an untrusted peer can never choose its client address, and a
+decoded cursor re-encodes to the same position. `sh scripts/fuzz.sh` runs each for
+`FUZZTIME` (CI: 15s per target); failing inputs land in `testdata/fuzz/` and are
+replayed by plain `go test` forever after. Fuzzing found a NaN rate accepted as a
+rate-limit policy and a carriage return accepted as a bearer token.
+
+**Contract tests.** Every response in the integration tests is validated against
+[api/openapi.yaml](api/openapi.yaml): the status must be documented for that
+operation and the body must match its schema exactly. A unit test also checks
+that every error code in the source appears in the documented `Error` schema.
+Together they found an invalid schema, 14 undocumented error codes and an
+undocumented 404.
+
+**Attacker view.** [attacker_integration_test.go](internal/httpapi/attacker_integration_test.go)
+replays another user's `Idempotency-Key`, uses a victim's real ETag, forges cursors
+into a victim's history, compares answers for real and made-up IDs, and injects a
+victim's user ID in paths, bodies and queries.
+
+**Load tests** ([loadtest/](loadtest)), run against the Compose stack with k6:
+
+```sh
+docker run --rm -i --network latihanapi_default -e BASE_URL=http://latihan-api:8080 \n  grafana/k6:2.3.0 run - < loadtest/capacity.js   # start the stack with RATE_LIMIT_*=off first
+docker run --rm -i --network latihanapi_default -e BASE_URL=http://latihan-api:8080 \n  grafana/k6:2.3.0 run - < loadtest/pressure.js   # default limits
+```
+
+The network is `<project>_default`; the project name is the checkout's directory
+name in lower case unless `COMPOSE_PROJECT_NAME` is set.
+
+On a 16-core development machine (so only indicative), 50 users mixing reads,
+idempotent creates and conditional updates reached about 4,000 requests/s with p95
+of 10 ms (reads) and 23 ms (writes), limited by the 10-connection pool:
+`latihan_db_pool_empty_acquires_total` climbed steadily. With `DB_MAX_CONNS=30`
+the same test reached about 7,100 requests/s (p95 6.5 ms / 16 ms). Watch that
+metric before raising the pool size, and keep it within PostgreSQL's
+`max_connections`. Under pressure (600 requests/s of credential stuffing and
+unauthenticated reads from one address), the defaults answered 10,911 requests with
+429 and `Retry-After`, let 10 login attempts reach password hashing, returned no
+server errors, and kept p99 under 1 ms.
 
 Make targets: `run`, `build`, `test`, `fmt`, `vet`, `lint`, `vuln`, `check`, `keygen`,
 `test-integration`, `seed`, `migrate-up`, `migrate-down`, `docker-up`, `docker-down`.

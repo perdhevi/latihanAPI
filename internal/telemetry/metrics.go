@@ -77,7 +77,8 @@ var knownMethods = map[string]bool{
 }
 
 // ObserveRequest records one finished request. route is the matched mux
-// pattern; unknown methods are folded into OTHER to keep labels bounded.
+// pattern, or "none" for requests refused before routing (rate limits, load
+// shedding); unknown methods are folded into OTHER to keep labels bounded.
 func (m *Metrics) ObserveRequest(route, method string, status int, seconds float64) {
 	if m == nil {
 		return
@@ -86,7 +87,7 @@ func (m *Metrics) ObserveRequest(route, method string, status int, seconds float
 		method = "OTHER"
 	}
 	if route == "" {
-		route = "unmatched"
+		route = "none"
 	}
 	m.requests.WithLabelValues(route, method, strconv.Itoa(status)).Inc()
 	m.duration.WithLabelValues(route, method).Observe(seconds)
