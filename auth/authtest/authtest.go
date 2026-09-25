@@ -74,6 +74,10 @@ func NewIssuer(t testing.TB) *Issuer {
 	return iss
 }
 
+// PublicKey is the key that verifies Sign's tokens, and KeyID its "kid".
+func (i *Issuer) PublicKey() *rsa.PublicKey { return &i.key.PublicKey }
+func (i *Issuer) KeyID() string             { return i.kid }
+
 // Sign returns an RS256 token over claims, signed with the issuer's published key.
 // Time claims default to a token issued now that expires in five minutes.
 func (i *Issuer) Sign(t testing.TB, claims map[string]any) string {

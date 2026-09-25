@@ -4,6 +4,7 @@ package jwks
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rsa"
@@ -46,11 +47,24 @@ type Config struct {
 	Logger         *slog.Logger
 }
 
-// Verifier implements auth.Authenticator.
+// Verifier implements auth.Authenticator and auth.IssuerBound.
 type Verifier struct {
 	cfg    Config
-	keys   *keySet
+	keys   keyLookup
 	parser *jwt.Parser
+}
+
+// keyLookup finds a signing key by ID. ok is false for unknown keys; err means
+// no keys are available at all.
+type keyLookup interface {
+	key(ctx context.Context, kid string) (k publicKey, ok bool, err error)
+}
+
+type staticKeys map[string]publicKey
+
+func (s staticKeys) key(_ context.Context, kid string) (publicKey, bool, error) {
+	k, ok := s[kid]
+	return k, ok, nil
 }
 
 var supportedAlgorithms = map[string]bool{
@@ -60,13 +74,50 @@ var supportedAlgorithms = map[string]bool{
 	"EdDSA": true,
 }
 
-// New validates cfg and loads the key set, failing fast on misconfiguration.
+// New validates cfg and loads the key set from cfg.JWKSURL, failing fast on
+// misconfiguration.
 func New(ctx context.Context, cfg Config) (*Verifier, error) {
-	if cfg.Issuer == "" || cfg.Audience == "" {
-		return nil, errors.New("issuer and audience are required")
-	}
 	if err := requireHTTPS(cfg.JWKSURL); err != nil {
 		return nil, fmt.Errorf("JWKS URL: %w", err)
+	}
+	v, err := newVerifier(cfg)
+	if err != nil {
+		return nil, err
+	}
+	remote := &keySet{url: v.cfg.JWKSURL, client: v.cfg.HTTPClient, logger: v.cfg.Logger, now: time.Now}
+	if err := remote.refresh(ctx); err != nil {
+		return nil, fmt.Errorf("loading signing keys from %s: %w", cfg.JWKSURL, err)
+	}
+	v.keys = remote
+	return v, nil
+}
+
+// NewStatic verifies tokens signed by keys the caller already holds, such as
+// this service's own signing keys. keys maps key IDs to public keys.
+func NewStatic(cfg Config, keys map[string]crypto.PublicKey) (*Verifier, error) {
+	if len(keys) == 0 {
+		return nil, errors.New("at least one public key is required")
+	}
+	v, err := newVerifier(cfg)
+	if err != nil {
+		return nil, err
+	}
+	static := make(staticKeys, len(keys))
+	for kid, key := range keys {
+		switch key.(type) {
+		case *rsa.PublicKey, *ecdsa.PublicKey, ed25519.PublicKey:
+			static[kid] = publicKey{key: key}
+		default:
+			return nil, fmt.Errorf("unsupported key type %T", key)
+		}
+	}
+	v.keys = static
+	return v, nil
+}
+
+func newVerifier(cfg Config) (*Verifier, error) {
+	if cfg.Issuer == "" || cfg.Audience == "" {
+		return nil, errors.New("issuer and audience are required")
 	}
 	if len(cfg.Algorithms) == 0 {
 		return nil, errors.New("at least one algorithm is required")
@@ -96,16 +147,11 @@ func New(ctx context.Context, cfg Config) (*Verifier, error) {
 	if cfg.AudienceClaim == "aud" {
 		opts = append(opts, jwt.WithAudience(cfg.Audience))
 	}
-	v := &Verifier{
-		cfg:    cfg,
-		keys:   &keySet{url: cfg.JWKSURL, client: cfg.HTTPClient, logger: cfg.Logger, now: time.Now},
-		parser: jwt.NewParser(opts...),
-	}
-	if err := v.keys.refresh(ctx); err != nil {
-		return nil, fmt.Errorf("loading signing keys from %s: %w", cfg.JWKSURL, err)
-	}
-	return v, nil
+	return &Verifier{cfg: cfg, parser: jwt.NewParser(opts...)}, nil
 }
+
+// Issuer is the only issuer whose tokens v accepts.
+func (v *Verifier) Issuer() string { return v.cfg.Issuer }
 
 // Authenticate verifies the request's bearer token.
 func (v *Verifier) Authenticate(r *http.Request) (auth.Identity, error) {

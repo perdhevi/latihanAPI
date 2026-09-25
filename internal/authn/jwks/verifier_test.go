@@ -1,6 +1,7 @@
 package jwks
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -150,3 +151,20 @@ func TestECKeys(t *testing.T) {
 }
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// Local keys go through the same checks as keys fetched from a JWKS URL.
+func TestStaticKeysConformance(t *testing.T) {
+	authtest.Run(t, authtest.Suite{
+		New: func(t *testing.T, iss *authtest.Issuer) auth.Authenticator {
+			v, err := NewStatic(Config{Issuer: iss.URL, Audience: "latihan-api", Algorithms: []string{"RS256"}},
+				map[string]crypto.PublicKey{iss.KeyID(): iss.PublicKey()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return v
+		},
+		Claims: func(iss *authtest.Issuer) map[string]any {
+			return map[string]any{"iss": iss.URL, "aud": "latihan-api", "sub": "user-1"}
+		},
+	})
+}

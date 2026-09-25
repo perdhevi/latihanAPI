@@ -1,11 +1,8 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
-	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -13,28 +10,19 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/perdhevi/latihanAPI/auth"
+	"github.com/perdhevi/latihanAPI/internal/httpjson"
 	"github.com/perdhevi/latihanAPI/internal/profile"
 	"github.com/perdhevi/latihanAPI/internal/training"
 	"github.com/perdhevi/latihanAPI/internal/validation"
 )
 
-const maxBodyBytes = 1 << 20
+const maxBodyBytes = httpjson.MaxBodyBytes
 
-type errorResponse struct {
-	Error errorDetail `json:"error"`
-}
-type errorDetail struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
+type errorResponse = httpjson.ErrorResponse
 
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
+func writeJSON(w http.ResponseWriter, status int, value any) { httpjson.Write(w, status, value) }
 func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, errorResponse{Error: errorDetail{Code: code, Message: message}})
+	httpjson.Error(w, status, code, message)
 }
 
 type handlers struct {
@@ -75,36 +63,7 @@ func pathID(w http.ResponseWriter, r *http.Request, key string) (uuid.UUID, bool
 	return parseUUID(w, r.PathValue(key))
 }
 func decodeBody[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
-	var zero T
-	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || mediaType != "application/json" {
-		writeError(w, http.StatusUnsupportedMediaType, "invalid_request", "Content-Type must be application/json")
-		return zero, false
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	var input *T
-	err = decoder.Decode(&input)
-	if err == nil {
-		var extra any
-		if e := decoder.Decode(&extra); e != io.EOF {
-			err = e
-			if err == nil {
-				err = errors.New("multiple JSON values")
-			}
-		}
-	}
-	if err != nil || input == nil {
-		var oversized *http.MaxBytesError
-		if errors.As(err, &oversized) {
-			writeError(w, http.StatusRequestEntityTooLarge, "invalid_request", "request body exceeds 1 MiB")
-		} else {
-			writeError(w, http.StatusBadRequest, "invalid_request", "body must be one JSON object with valid writable fields")
-		}
-		return zero, false
-	}
-	return *input, true
+	return httpjson.Decode[T](w, r)
 }
 
 func queryValues(w http.ResponseWriter, r *http.Request, allowed ...string) (url.Values, bool) {

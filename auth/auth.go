@@ -15,6 +15,7 @@ package auth
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -48,6 +49,13 @@ type Authenticator interface {
 	Authenticate(r *http.Request) (Identity, error)
 }
 
+// IssuerBound is implemented by providers that accept tokens from exactly one
+// issuer. Only such providers can be combined in a comma-separated
+// AUTH_PROVIDER list, which routes each token by its "iss" claim.
+type IssuerBound interface {
+	Issuer() string
+}
+
 // RouteRegistrar is implemented by providers that serve their own endpoints,
 // such as login or key publication. The service mounts them without
 // authentication; the provider is responsible for protecting them.
@@ -62,6 +70,9 @@ type Deps struct {
 	Logger *slog.Logger
 	// HTTPClient has sensible timeouts; use it for outbound calls such as key fetches.
 	HTTPClient *http.Client
+	// DB is the service's PostgreSQL database. Providers that store data use
+	// their own tables, created by migrations shipped with the provider.
+	DB *sql.DB
 }
 
 // Factory builds a provider. ctx bounds startup work such as fetching keys.
@@ -99,8 +110,14 @@ func Names() []string {
 	return names
 }
 
-// New builds the provider registered under name.
+// New builds the provider registered under name. A comma-separated list builds
+// each listed provider and routes every token to the one whose Issuer matches
+// the token's "iss" claim, which lets a deployment move between providers
+// without logging everyone out at once.
 func New(ctx context.Context, name string, deps Deps) (Authenticator, error) {
+	if strings.Contains(name, ",") {
+		return newMulti(ctx, strings.Split(name, ","), deps)
+	}
 	mu.RLock()
 	f, ok := factories[name]
 	mu.RUnlock()
