@@ -9,7 +9,8 @@ import (
 )
 
 type Repository interface {
-	CreateUser(context.Context, uuid.UUID, UserInput) (User, error)
+	CreateUser(context.Context, uuid.UUID, UserInput, Identity) (User, error)
+	ResolveIdentity(context.Context, Identity) (uuid.UUID, error)
 	GetUser(context.Context, uuid.UUID) (User, error)
 	UpdateUser(context.Context, uuid.UUID, UserInput) (User, error)
 	DeleteUser(context.Context, uuid.UUID) error
@@ -23,11 +24,18 @@ type Repository interface {
 type Service struct{ repo Repository }
 
 func NewService(repo Repository) *Service { return &Service{repo: repo} }
-func (s *Service) CreateUser(ctx context.Context, in UserInput) (User, error) {
+
+// CreateUser creates a profile owned by the calling identity.
+func (s *Service) CreateUser(ctx context.Context, in UserInput, owner Identity) (User, error) {
 	if err := validation.Text("display_name", &in.DisplayName, 200, true); err != nil {
 		return User{}, err
 	}
-	return s.repo.CreateUser(ctx, uuid.New(), in)
+	return s.repo.CreateUser(ctx, uuid.New(), in, owner)
+}
+
+// ResolveIdentity returns the user linked to an identity, or ErrNotFound.
+func (s *Service) ResolveIdentity(ctx context.Context, id Identity) (uuid.UUID, error) {
+	return s.repo.ResolveIdentity(ctx, id)
 }
 func (s *Service) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
 	return s.repo.GetUser(ctx, id)

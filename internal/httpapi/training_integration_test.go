@@ -10,6 +10,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +34,10 @@ func plannedExercises() []training.ExerciseInput {
 }
 func call(t *testing.T, h http.Handler, method, path string, body any, status int, out any) {
 	t.Helper()
+	callAs(t, h, "athlete", method, path, body, status, out)
+}
+func callAs(t *testing.T, h http.Handler, subject, method, path string, body any, status int, out any) {
+	t.Helper()
 	raw := ""
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -39,7 +46,7 @@ func call(t *testing.T, h http.Handler, method, path string, body any, status in
 		}
 		raw = string(encoded)
 	}
-	w := request(h, method, path, raw)
+	w := requestAs(h, "Bearer test|"+subject, method, path, raw)
 	if w.Code != status {
 		t.Fatalf("%s %s: got %d want %d: %s", method, path, w.Code, status, w.Body)
 	}
@@ -59,10 +66,12 @@ func call(t *testing.T, h http.Handler, method, path string, body any, status in
 func TestTrainingAPIIntegration(t *testing.T) {
 	pool := testdb.Open(t)
 	repo := training.NewPostgresRepository(pool)
-	h := NewRouter(training.NewService(repo), profile.NewService(profile.NewPostgresRepository(pool)), pool, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h := NewRouter(training.NewService(repo), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
 	var user, other profile.User
 	call(t, h, "POST", "/api/v1/users", profile.UserInput{DisplayName: " Athlete "}, 201, &user)
-	call(t, h, "POST", "/api/v1/users", profile.UserInput{DisplayName: "Other"}, 201, &other)
+	callAs(t, h, "other", "POST", "/api/v1/users", profile.UserInput{DisplayName: "Other"}, 201, &other)
+	// One identity, one profile.
+	call(t, h, "POST", "/api/v1/users", profile.UserInput{DisplayName: "Twin"}, 409, nil)
 	if user.DisplayName != "Athlete" || user.ID == uuid.Nil {
 		t.Fatalf("user: %+v", user)
 	}
@@ -233,12 +242,15 @@ func TestTrainingAPIIntegration(t *testing.T) {
 	call(t, h, "GET", planURL, nil, 404, nil)
 	call(t, h, "PUT", planURL, planInput, 404, nil)
 	call(t, h, "DELETE", userURL, nil, 204, nil)
-	call(t, h, "GET", userURL, nil, 404, nil)
-	call(t, h, "GET", measurementsURL, nil, 404, nil)
-	call(t, h, "POST", measurementsURL, mInput, 400, nil)
-	call(t, h, "POST", "/api/v1/plans", planInput, 400, nil)
+	// The deleted user's identity has no profile any more.
+	call(t, h, "GET", "/api/v1/plans?user_id="+user.ID.String(), nil, 403, nil)
+	// References to the deleted user, made by someone who still has a profile.
+	callAs(t, h, "other", "GET", userURL, nil, 404, nil)
+	callAs(t, h, "other", "GET", measurementsURL, nil, 404, nil)
+	callAs(t, h, "other", "POST", measurementsURL, mInput, 400, nil)
+	callAs(t, h, "other", "POST", "/api/v1/plans", planInput, 400, nil)
 	standalone.UserID = user.ID
-	call(t, h, "POST", "/api/v1/sessions", standalone, 400, nil)
+	callAs(t, h, "other", "POST", "/api/v1/sessions", standalone, 400, nil)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -253,8 +265,20 @@ func TestMigrationRoundTrip(t *testing.T) {
 	if _, err := pool.Exec(t.Context(), `INSERT INTO exercises (id,name,category) VALUES ($1,'Legacy','strength')`, legacyID); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"../../migrations/000002_create_training.down.sql", "../../migrations/000002_create_training.up.sql"} {
-		sql, err := os.ReadFile(path)
+	// Roll back every migration after the original catalog, newest first, then reapply them.
+	downs, err := filepath.Glob("../../migrations/*.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Reverse(downs)
+	downs = slices.DeleteFunc(downs, func(p string) bool { return strings.Contains(p, "000001_") })
+	ups, err := filepath.Glob("../../migrations/*.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ups = slices.DeleteFunc(ups, func(p string) bool { return strings.Contains(p, "000001_") })
+	for _, path := range append(downs, ups...) {
+		sql, err := os.ReadFile(path) //nolint:gosec // G304: fixed glob of this repository's migrations
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -267,4 +291,18 @@ func TestMigrationRoundTrip(t *testing.T) {
 	if err := pool.QueryRow(t.Context(), `SELECT name FROM exercises WHERE id=$1`, legacyID).Scan(&name); err != nil || name != "Legacy" {
 		t.Fatal(err)
 	}
+}
+
+func TestIdentityLinkingIntegration(t *testing.T) {
+	pool := testdb.Open(t)
+	h := NewRouter(training.NewService(training.NewPostgresRepository(pool)), profile.NewService(profile.NewPostgresRepository(pool)), pool, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	id := uuid.NewString()
+	callAs(t, h, "newcomer", "GET", "/api/v1/sessions?user_id="+id, nil, 403, nil)
+	var user profile.User
+	callAs(t, h, "newcomer", "POST", "/api/v1/users", profile.UserInput{DisplayName: "New"}, 201, &user)
+	callAs(t, h, "newcomer", "GET", "/api/v1/sessions?user_id="+user.ID.String(), nil, 200, nil)
+	// Deleting the profile releases the identity, which can then start over.
+	callAs(t, h, "newcomer", "DELETE", "/api/v1/users/"+user.ID.String(), nil, 204, nil)
+	callAs(t, h, "newcomer", "GET", "/api/v1/sessions?user_id="+user.ID.String(), nil, 403, nil)
+	callAs(t, h, "newcomer", "POST", "/api/v1/users", profile.UserInput{DisplayName: "Again"}, 201, nil)
 }

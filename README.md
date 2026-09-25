@@ -12,12 +12,17 @@ This is an idiomatic Go modular monolith using `net/http`, `log/slog`, `pgxpool`
 raw SQL, and explicit constructor injection. Latihan follows an open-core model:
 the public fitness domain works without private repositories. Gym memberships,
 subscriptions, billing, coaches, bookings, tenant management, entitlements, and
-advertising remain outside this repository. Authentication and cloud/offline
-synchronization are not implemented yet.
+advertising remain outside this repository. Cloud/offline synchronization is not
+implemented yet.
 
-**User IDs identify record ownership; they do not authenticate callers.** Anyone
-with network access can read or change records. Keep this slice on a trusted local
-network until authentication and authorization are added. Compose binds to localhost.
+Every `/api/v1` request needs a bearer token from a pluggable provider: Firebase,
+Amazon Cognito or any OpenID Connect issuer, chosen in `.env` with no code changes
+(see [Authentication](#authentication)).
+
+**Ownership is not enforced yet.** Authenticated callers can still read or change
+another user's records if they know its IDs; phase 4 of the
+[hardening roadmap](docs/ROADMAP.md) closes this. Until then, keep the service on a
+trusted network. Compose binds to localhost.
 
 ## What changed from the Exercise Library API
 
@@ -37,10 +42,14 @@ Prerequisites: Docker Engine/Desktop with Compose v2, ports 8080 and 5432 availa
 
 ```sh
 cp .env.example .env
+# edit .env: uncomment one AUTH_PROVIDER block and fill in its values
 docker compose up --build
 ```
 
-Use `Copy-Item .env.example .env` on PowerShell. Compose starts PostgreSQL 17,
+Use `Copy-Item .env.example .env` on PowerShell. The API refuses to start until
+`AUTH_PROVIDER` is set, and it checks the provider's settings and downloads its
+signing keys before anything else, so mistakes show up in the first log line.
+Compose starts PostgreSQL 17,
 waits for its health check, applies migrations, and starts the non-root API.
 The API also retries database connectivity for up to 30 seconds at startup.
 The `latihan` database/user/password values are **local development credentials**.
@@ -67,14 +76,76 @@ Get-Content -Raw seeds/development.sql | docker compose exec -T postgres psql -U
 ```
 
 The seed is transactional, repeatable, and never part of application startup.
-Try the seeded comparison:
+The seeded user has no login. To explore it, link your own identity to it, using
+the `iss` and `sub` claims from your token. Decode the token locally rather than
+pasting a live token into a website:
 
 ```sh
-curl 'http://localhost:8080/api/v1/plans/20000000-0000-4000-8000-000000000001/comparison?session_id=30000000-0000-4000-8000-000000000001'
-curl 'http://localhost:8080/api/v1/sessions?user_id=10000000-0000-4000-8000-000000000001'
+echo "$TOKEN" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null; echo
+```
+
+```sh
+docker compose exec -T postgres psql -U latihan -d latihan -c \
+  "INSERT INTO user_identities (issuer, subject, user_id) VALUES ('YOUR_ISS', 'YOUR_SUB', '10000000-0000-4000-8000-000000000001')"
+```
+
+Then try the seeded comparison:
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/plans/20000000-0000-4000-8000-000000000001/comparison?session_id=30000000-0000-4000-8000-000000000001'
+curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/sessions?user_id=10000000-0000-4000-8000-000000000001'
 ```
 
 `docker compose down` retains the database. `docker compose down -v` deletes it.
+
+## Authentication
+
+The API never handles passwords. A provider signs a token for the client (the
+Flutter app signs in with the provider's SDK), and the API verifies that token's
+signature, issuer, audience and lifetime on every request.
+
+| `AUTH_PROVIDER` | Settings | Token the client sends |
+| --- | --- | --- |
+| `firebase` | `AUTH_FIREBASE_PROJECT_ID` | Firebase ID token (`getIdToken()`) |
+| `cognito` | `AUTH_COGNITO_REGION`, `AUTH_COGNITO_USER_POOL_ID`, `AUTH_COGNITO_CLIENT_ID`, `AUTH_COGNITO_TOKEN_USE` (`access` or `id`) | Cognito access token (or ID token if configured) |
+| `oidc` | `AUTH_OIDC_ISSUER`, `AUTH_OIDC_AUDIENCE`, optional `AUTH_OIDC_JWKS_URL`, `AUTH_OIDC_ALGORITHMS` | Access token from Keycloak, Auth0, Zitadel or another OIDC issuer |
+
+Send it as `Authorization: Bearer <token>`. The first call for a new identity is
+`POST /api/v1/users`, which creates a profile and links the identity to it; every
+other `/api/v1` call requires that profile.
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| 401 | `unauthenticated` | Missing, expired or invalid token. `WWW-Authenticate` carries the RFC 6750 challenge. |
+| 403 | `profile_required` | Valid token, but this identity has not created its profile yet. |
+| 409 | `profile_exists` | `POST /api/v1/users` for an identity that already has a profile. |
+| 503 | `auth_unavailable` | The provider's signing keys could not be loaded. |
+
+Verification details: only the configured asymmetric algorithms are accepted (never
+`none` or HMAC), key URLs must be HTTPS, tokens over 8 KiB are refused, and clocks may
+differ by up to 30 seconds. Signing keys are cached, refreshed hourly, and refetched
+for an unknown key ID at most once a minute; during a key-server outage the last
+good keys keep working. `/health` and `/ready` need no token.
+
+Identities live in `user_identities (issuer, subject) → user_id`. A user can have
+several identities, so moving to another provider means linking the new identity
+to the existing user rather than migrating data. Deleting a user deletes its links.
+
+### Adding another provider
+
+Providers are compiled in and listed in [cmd/api/plugins.go](cmd/api/plugins.go).
+A provider implements the small interface in the standalone
+[`auth`](auth/auth.go) module (standard library only) and registers itself by name:
+
+```go
+func init() { auth.Register("ldap", New) }
+```
+
+To use one from another repository, run `go get` on it, add its import to
+`plugins.go`, rebuild, and set `AUTH_PROVIDER` to its name. JWT-based providers
+should pass [`auth/authtest`](auth/authtest/authtest.go), the conformance suite
+the built-in providers run: expired and future tokens, wrong issuer or audience,
+`alg: none`, HMAC key confusion, unknown or wrong keys, and tampered payloads.
 
 ## Endpoints
 
@@ -108,14 +179,16 @@ returns 409 instead of silently deleting history. Delete dependencies explicitly
 
 ## Profile → plan → session
 
-Create a profile first:
+Create a profile first. `TOKEN` holds a token from your provider:
 
 ```sh
 curl -X POST http://localhost:8080/api/v1/users \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -d '{"display_name":"Alex"}'
 ```
 
-Use the returned `id` as `user_id`. User profiles currently contain a display name;
+Use the returned `id` as `user_id`, and send the same `Authorization` header on
+every request below. User profiles currently contain a display name;
 body measurements live in timestamped history rather than mutable profile fields.
 
 Create a plan by posting this body to `/api/v1/plans` (replace `USER_UUID`):
@@ -242,14 +315,16 @@ make run
 ```
 
 Make loads and exports `.env`; the Go binary itself only reads environment variables.
-Compose uses fixed local credentials and its internal hostname; only its log level
-is overridden from `.env`.
+Compose uses fixed local credentials and its internal hostname for the database;
+the log level and `AUTH_*` settings come from `.env`.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `HTTP_ADDR` | `:8080` | Listener |
 | `DATABASE_URL` | Required | PostgreSQL connection URL |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `AUTH_PROVIDER` | Required | `firebase`, `cognito` or `oidc`; see [Authentication](#authentication) and `.env.example` |
+| `AUTH_*` | Provider-specific | Settings for the selected provider |
 | `TEST_DATABASE_URL` | Required for integration tests | Disposable test database |
 
 Without Make (PowerShell):
@@ -270,9 +345,12 @@ is a PowerShell alias, or use `Invoke-RestMethod`.
 cmd/api            application composition and lifecycle
 internal/profile   profiles, historical measurements, validation, SQL
 internal/training  plans, sessions, snapshot comparisons, validation, SQL
+auth               standalone module: provider contract and registry (stdlib only)
+auth/authtest      conformance suite for JWT-based providers
 internal/httpapi   REST routing, transport, middleware
 internal/validation shared text/numeric/pagination validation
 internal/database  PostgreSQL pool and bounded startup retry
+internal/authn     built-in providers: jwks (shared verifier), firebase, cognito, oidc
 internal/config    environment configuration
 internal/testdb    integration-test schema setup (integration build tag only)
 migrations         reversible versioned SQL
@@ -312,7 +390,9 @@ user needs schema creation permission. Never use a production database for tests
 The integration tag fails if its database URL is missing. Tests cover CRUD,
 ownership constraints, stable plan snapshots, plan changes/detachment, comparison
 metrics, missing/unplanned exercises, history ordering, pagination, cancellation,
-deletion conflicts, and migration rollback/reapplication.
+deletion conflicts, migration rollback/reapplication, identity linking, and the
+401/403/409/503 authentication responses. Every built-in provider also runs the
+`auth/authtest` conformance suite against a fake TLS identity provider.
 
 CI runs three jobs: **lint** (tidy modules, golangci-lint with gosec and other
 security linters, formatting), **vulnerabilities** (govulncheck; fails only on

@@ -7,19 +7,21 @@ import (
 
 func TestLoad(t *testing.T) {
 	for _, tc := range []struct {
-		name, addr, url, level string
-		wantErr                bool
+		name, addr, url, level, provider string
+		wantErr                          bool
 	}{
-		{"defaults", "", "postgres://localhost/latihan", "", false},
-		{"explicit", "127.0.0.1:9000", "postgres://localhost/latihan", "debug", false},
-		{"missing database", "", "", "", true},
-		{"bad address", "localhost", "postgres://localhost/latihan", "", true},
-		{"bad log level", "", "postgres://localhost/latihan", "verbose", true},
+		{"defaults", "", "postgres://localhost/latihan", "", "oidc", false},
+		{"explicit", "127.0.0.1:9000", "postgres://localhost/latihan", "debug", "firebase", false},
+		{"missing database", "", "", "", "oidc", true},
+		{"missing auth provider", "", "postgres://localhost/latihan", "", "", true},
+		{"bad address", "localhost", "postgres://localhost/latihan", "", "oidc", true},
+		{"bad log level", "", "postgres://localhost/latihan", "verbose", "oidc", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HTTP_ADDR", tc.addr)
 			t.Setenv("DATABASE_URL", tc.url)
 			t.Setenv("LOG_LEVEL", tc.level)
+			t.Setenv("AUTH_PROVIDER", tc.provider)
 			cfg, err := Load()
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("Load() error=%v", err)

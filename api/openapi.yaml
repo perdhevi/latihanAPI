@@ -1,11 +1,13 @@
 openapi: "3.0.3"
 info:
   title: "latihanApi"
-  version: "0.2.0"
-  description: "Personal sessions, plans, profiles and measurement history. /exercises has been removed. User IDs identify ownership but do not authenticate callers; restrict network access until authentication is added. All responses include X-Request-ID. Input bodies are limited to 1 MiB; unknown JSON fields, unknown/repeated query parameters and multiple JSON values are rejected. Strings are trimmed. PUT fully replaces editable fields; no upserts. UUIDs and creation timestamps are server-managed. HTTP method errors use the same Error schema."
+  version: "0.3.0"
+  description: "Personal sessions, plans, profiles and measurement history. /exercises has been removed. Every /api/v1 operation requires a bearer token from the configured provider. POST /api/v1/users links the caller's identity to a new profile; other operations require that profile. Ownership of user_id values is not yet enforced (phase 4). All responses include X-Request-ID. Input bodies are limited to 1 MiB; unknown JSON fields, unknown/repeated query parameters and multiple JSON values are rejected. Strings are trimmed. PUT fully replaces editable fields; no upserts. UUIDs and creation timestamps are server-managed. HTTP method errors use the same Error schema."
 servers:
   -
     url: "http://localhost:8080"
+security:
+  - bearerAuth: []
 tags:
   -
     name: "Health"
@@ -21,6 +23,7 @@ paths:
   "/health":
     get:
       operationId: "health"
+      security: []
       tags:
         - "Health"
       summary: "Liveness independent of database availability"
@@ -34,6 +37,7 @@ paths:
   "/ready":
     get:
       operationId: "ready"
+      security: []
       tags:
         - "Health"
       summary: "PostgreSQL connectivity with a two-second deadline"
@@ -63,6 +67,12 @@ paths:
             schema:
               "$ref": "#/components/schemas/SessionInput"
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "201":
           description: "Created"
           content:
@@ -130,6 +140,12 @@ paths:
             maximum: 2147483647
             default: 0
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "200":
           description: "Page"
           content:
@@ -178,6 +194,12 @@ paths:
         - "Sessions"
       summary: "Get session"
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "200":
           description: "Found"
           content:
@@ -214,6 +236,12 @@ paths:
             schema:
               "$ref": "#/components/schemas/SessionInput"
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "200":
           description: "Updated"
           content:
@@ -256,6 +284,12 @@ paths:
         - "Sessions"
       summary: "Delete session"
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "204":
           description: "Deleted, no body"
         "400":
@@ -289,6 +323,12 @@ paths:
             schema:
               "$ref": "#/components/schemas/PlanInput"
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "201":
           description: "Created"
           content:
@@ -356,6 +396,12 @@ paths:
             maximum: 2147483647
             default: 0
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "200":
           description: "Page"
           content:
@@ -404,6 +450,12 @@ paths:
         - "Plans"
       summary: "Get plan"
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "200":
           description: "Found"
           content:
@@ -440,6 +492,12 @@ paths:
             schema:
               "$ref": "#/components/schemas/PlanInput"
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "200":
           description: "Updated"
           content:
@@ -482,6 +540,12 @@ paths:
         - "Plans"
       summary: "Delete plan"
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "204":
           description: "Deleted, no body"
         "400":
@@ -521,6 +585,16 @@ paths:
             schema:
               "$ref": "#/components/schemas/UserInput"
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "409":
+          description: "This identity already has a profile."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "201":
           description: "Created"
           content:
@@ -572,6 +646,12 @@ paths:
         - "Users"
       summary: "Get user"
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "200":
           description: "Found"
           content:
@@ -608,6 +688,12 @@ paths:
             schema:
               "$ref": "#/components/schemas/UserInput"
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "200":
           description: "Updated"
           content:
@@ -650,6 +736,12 @@ paths:
         - "Users"
       summary: "Delete user"
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "204":
           description: "Deleted, no body"
         "400":
@@ -698,6 +790,12 @@ paths:
             schema:
               "$ref": "#/components/schemas/MeasurementInput"
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "201":
           description: "Created"
           content:
@@ -757,6 +855,12 @@ paths:
             maximum: 2147483647
             default: 0
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "200":
           description: "Page"
           content:
@@ -819,6 +923,12 @@ paths:
         - "Measurements"
       summary: "Get measurement"
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "200":
           description: "Found"
           content:
@@ -855,6 +965,12 @@ paths:
             schema:
               "$ref": "#/components/schemas/MeasurementInput"
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "200":
           description: "Updated"
           content:
@@ -897,6 +1013,12 @@ paths:
         - "Measurements"
       summary: "Delete measurement"
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "204":
           description: "Deleted, no body"
         "400":
@@ -942,6 +1064,12 @@ paths:
             format: "uuid"
             description: "Nonzero UUID"
       responses:
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/AuthUnavailable"
         "200":
           description: "Planned versus actual"
           content:
@@ -967,6 +1095,35 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: "http"
+      scheme: "bearer"
+      bearerFormat: "JWT"
+      description: "Token from the configured AUTH_PROVIDER (Firebase ID token, Cognito access or ID token, or OIDC access token)."
+  responses:
+    Unauthorized:
+      description: "Missing or invalid bearer token. WWW-Authenticate describes the challenge."
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: "string"
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
+    ProfileRequired:
+      description: "Authenticated, but the identity has no profile yet. Create one with POST /api/v1/users."
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
+    AuthUnavailable:
+      description: "The authentication provider could not verify the token, for example because its key server is unreachable."
+      content:
+        "application/json":
+          schema:
+            "$ref": "#/components/schemas/Error"
   schemas:
     Set:
       type: "object"

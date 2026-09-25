@@ -34,8 +34,31 @@ func scanUser(row pgx.Row) (User, error) {
 	u.UpdatedAt = u.UpdatedAt.UTC()
 	return u, mapError(err)
 }
-func (r *PostgresRepository) CreateUser(ctx context.Context, id uuid.UUID, in UserInput) (User, error) {
-	return scanUser(r.pool.QueryRow(ctx, `INSERT INTO user_profiles (id,display_name) VALUES ($1,$2) RETURNING id,display_name,created_at,updated_at`, id, in.DisplayName))
+func (r *PostgresRepository) CreateUser(ctx context.Context, id uuid.UUID, in UserInput, owner Identity) (User, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return User{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after a successful Commit
+	user, err := scanUser(tx.QueryRow(ctx, `INSERT INTO user_profiles (id,display_name) VALUES ($1,$2) RETURNING id,display_name,created_at,updated_at`, id, in.DisplayName))
+	if err != nil {
+		return User{}, err
+	}
+	// The identity primary key makes a second profile for the same caller fail here.
+	_, err = tx.Exec(ctx, `INSERT INTO user_identities (issuer,subject,user_id) VALUES ($1,$2,$3)`, owner.Issuer, owner.Subject, id)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return User{}, ErrIdentityLinked
+	}
+	if err != nil {
+		return User{}, err
+	}
+	return user, tx.Commit(ctx)
+}
+func (r *PostgresRepository) ResolveIdentity(ctx context.Context, id Identity) (uuid.UUID, error) {
+	var userID uuid.UUID
+	err := r.pool.QueryRow(ctx, `SELECT user_id FROM user_identities WHERE issuer=$1 AND subject=$2`, id.Issuer, id.Subject).Scan(&userID)
+	return userID, mapError(err)
 }
 func (r *PostgresRepository) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
 	return scanUser(r.pool.QueryRow(ctx, `SELECT id,display_name,created_at,updated_at FROM user_profiles WHERE id=$1`, id))

@@ -1,6 +1,8 @@
 FROM golang:1.27.1-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
+# The auth contract is a separate module wired in with a replace directive.
+COPY auth ./auth
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal

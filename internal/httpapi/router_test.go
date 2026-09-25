@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/perdhevi/latihanAPI/auth"
 	"github.com/perdhevi/latihanAPI/internal/profile"
 	"github.com/perdhevi/latihanAPI/internal/training"
 )
@@ -40,12 +41,47 @@ func (s *fakeTraining) GetSession(ctx context.Context, id uuid.UUID) (training.S
 	}
 	return training.Session{ID: id}, s.err
 }
+
+// testAuth accepts "Bearer test|<subject>" and fails as if its key server were
+// down for "Bearer outage".
+type testAuth struct{}
+
+func (testAuth) Authenticate(r *http.Request) (auth.Identity, error) {
+	token, _ := auth.BearerToken(r)
+	if token == "outage" {
+		return auth.Identity{}, errors.New("private key server failure")
+	}
+	subject, ok := strings.CutPrefix(token, "test|")
+	if !ok || subject == "" {
+		return auth.Identity{}, auth.ErrUnauthenticated
+	}
+	return auth.Identity{Issuer: "https://issuer.test", Subject: subject}, nil
+}
+
+// fakeProfiles links the "athlete" identity to linkedUser; others have no profile.
+type fakeProfiles struct{ profile.Repository }
+
+var linkedUser = uuid.New()
+
+func (fakeProfiles) ResolveIdentity(_ context.Context, id profile.Identity) (uuid.UUID, error) {
+	if id.Subject == "athlete" {
+		return linkedUser, nil
+	}
+	return uuid.Nil, profile.ErrNotFound
+}
+
 func testRouter(repo *fakeTraining, p *testPinger) http.Handler {
-	return NewRouter(training.NewService(repo), profile.NewService(nil), p, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	return NewRouter(training.NewService(repo), profile.NewService(fakeProfiles{}), p, testAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
 }
 func request(h http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	return requestAs(h, "Bearer test|athlete", method, path, body)
+}
+func requestAs(h http.Handler, authorization, method, path, body string) *httptest.ResponseRecorder {
 	r := httptest.NewRequestWithContext(context.Background(), method, path, strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
+	if authorization != "" {
+		r.Header.Set("Authorization", authorization)
+	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	return w
@@ -111,7 +147,7 @@ func TestHealthReadinessAndRecovery(t *testing.T) {
 		t.Fatal("readiness should recover")
 	}
 	var logs bytes.Buffer
-	h = NewRouter(training.NewService(&fakeTraining{panicOnGet: true}), profile.NewService(nil), p, slog.New(slog.NewJSONHandler(&logs, nil)))
+	h = NewRouter(training.NewService(&fakeTraining{panicOnGet: true}), profile.NewService(fakeProfiles{}), p, testAuth{}, slog.New(slog.NewJSONHandler(&logs, nil)))
 	w := request(h, "GET", "/api/v1/sessions/"+uuid.NewString(), "")
 	if w.Code != 500 || strings.Contains(w.Body.String(), "private") {
 		t.Fatalf("panic: %d %s", w.Code, w.Body)
@@ -137,14 +173,68 @@ func TestErrorPrivacyAndContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/sessions/"+uuid.NewString(), nil)
+	r.Header.Set("Authorization", "Bearer test|athlete")
 	h.ServeHTTP(httptest.NewRecorder(), r)
 	if !errors.Is(repo.ctx.Err(), context.Canceled) {
 		t.Fatal("cancellation lost")
 	}
 	r = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/users", strings.NewReader(`{}`))
+	r.Header.Set("Authorization", "Bearer test|athlete")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if w.Code != 415 {
 		t.Fatalf("media type: %d", w.Code)
+	}
+}
+func TestAuthentication(t *testing.T) {
+	h := testRouter(&fakeTraining{}, &testPinger{})
+	session := "/api/v1/sessions/" + uuid.NewString()
+	for _, tc := range []struct {
+		name, authorization, method, path string
+		status                            int
+		code, challenge                   string
+	}{
+		{"no credentials", "", "GET", session, 401, "unauthenticated", `Bearer realm="latihan"`},
+		{"invalid token", "Bearer forged", "GET", session, 401, "unauthenticated", `Bearer realm="latihan", error="invalid_token"`},
+		{"wrong scheme", "Basic dXNlcjpwYXNz", "GET", session, 401, "unauthenticated", `Bearer realm="latihan", error="invalid_token"`},
+		{"provider outage", "Bearer outage", "GET", session, 503, "auth_unavailable", ""},
+		{"no profile yet", "Bearer test|newcomer", "GET", session, 403, "profile_required", ""},
+		{"profile creation needs credentials", "", "POST", "/api/v1/users", 401, "unauthenticated", `Bearer realm="latihan"`},
+		{"unknown routes stay 404", "", "GET", "/api/v1/nope", 404, "not_found", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := requestAs(h, tc.authorization, tc.method, tc.path, `{"display_name":"A"}`)
+			var response errorResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if w.Code != tc.status || response.Error.Code != tc.code {
+				t.Fatalf("got %d %s", w.Code, w.Body)
+			}
+			if got := w.Header().Get("WWW-Authenticate"); got != tc.challenge {
+				t.Fatalf("WWW-Authenticate %q, want %q", got, tc.challenge)
+			}
+			if strings.Contains(w.Body.String(), "private") {
+				t.Fatal("provider error leaked")
+			}
+		})
+	}
+	for _, path := range []string{"/health", "/ready"} {
+		if w := requestAs(h, "", "GET", path, ""); w.Code != 200 {
+			t.Fatalf("%s must not require credentials: %d", path, w.Code)
+		}
+	}
+}
+
+type registeringAuth struct{ testAuth }
+
+func (registeringAuth) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/v1/auth/login", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+}
+
+func TestProviderRoutesArePublic(t *testing.T) {
+	h := NewRouter(training.NewService(&fakeTraining{}), profile.NewService(fakeProfiles{}), &testPinger{}, registeringAuth{}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	if w := requestAs(h, "", "POST", "/api/v1/auth/login", "{}"); w.Code != http.StatusNoContent {
+		t.Fatalf("provider route not mounted: %d", w.Code)
 	}
 }

@@ -21,39 +21,41 @@ VM: Caddy (TLS :443) → latihan-api → PostgreSQL   (only Caddy publishes port
 
 ## Phases
 
-| Tag | Topic | Outcome |
-| --- | --- | --- |
-| phase-00 | Baseline and threat model | STRIDE review of the current API; module path `github.com/perdhevi/latihanAPI` |
-| phase-01 | Guardrails | golangci-lint (gosec, errcheck, bodyclose), govulncheck, SHA-pinned Actions, Dependabot |
-| phase-02 | Pluggable authentication | `auth` contract module, built-in providers, fail-closed startup, conformance kit |
-| phase-03 | Authorization | `user_id` comes from the principal only; owner-scoped SQL; 404 for other users' records; optional RLS |
-| phase-04 | Abuse resistance | Rate limits (429 + `Retry-After`), cursor pagination, `statement_timeout`, header and concurrency caps |
-| phase-05 | Safe retries | `Idempotency-Key` on POST, `ETag` / `If-Match` on PUT |
-| phase-06 | Observability | OpenTelemetry traces and metrics, panic stacks, admin port for metrics/pprof |
-| phase-07 | Secrets, TLS, least privilege | `*_FILE` secrets, Caddy TLS, `sslmode=verify-full`, migrator/app DB roles |
-| phase-08 | Shipping | Distroless image by digest, SBOM, cosign, hardened Compose, VM baseline, deploy workflow |
-| phase-09 | Proving it | Fuzzing, OpenAPI contract tests, load tests, cross-user access tests |
-| phase-10 | Health data responsibly | Export, erasure, audit log, backups and restore drills |
+| Tag | Topic | Outcome | Status |
+| --- | --- | --- | --- |
+| phase-00 | Baseline and threat model | Module path `github.com/perdhevi/latihanAPI`; STRIDE review of the API | Done (STRIDE doc pending) |
+| phase-01 | Guardrails | golangci-lint (gosec, errorlint, noctx, …), govulncheck, SHA-pinned Actions, Dependabot | Done |
+| phase-02 | Pluggable authentication | `auth` contract module, JWKS verifier, `firebase` / `cognito` / `oidc` providers, conformance kit, identity linking | Done |
+| phase-03 | Built-in token issuer | `jwt` provider: register/login/refresh, Ed25519 keys, argon2id, refresh-token rotation; multiple providers at once | Planned |
+| phase-04 | Authorization | `user_id` comes from the principal only; owner-scoped SQL; 404 for other users' records; optional RLS | Planned |
+| phase-05 | Abuse resistance | Rate limits (429 + `Retry-After`), cursor pagination, `statement_timeout`, header and concurrency caps | Planned |
+| phase-06 | Safe retries | `Idempotency-Key` on POST, `ETag` / `If-Match` on PUT | Planned |
+| phase-07 | Observability | OpenTelemetry traces and metrics, panic stacks, admin port for metrics/pprof | Planned |
+| phase-08 | Secrets, TLS, least privilege | `*_FILE` secrets, Caddy TLS, `sslmode=verify-full`, migrator/app DB roles | Planned |
+| phase-09 | Shipping | Distroless image by digest, SBOM, cosign, hardened Compose, VM baseline, deploy workflow | Planned |
+| phase-10 | Proving it | Fuzzing, OpenAPI contract tests, load tests, cross-user access tests | Planned |
+| phase-11 | Health data responsibly | Export, erasure, audit log, backups and restore drills | Planned |
 
-## Authentication design (phase-02)
+## Authentication design
 
 **Principle:** providers answer *who is this?*; the core decides *what may they
-touch?* Authorization never lives in a provider.
+touch?* Providers never see the database or make authorization decisions.
 
 ### Selection is configuration, not code
 
-`AUTH_PROVIDER` is required. There is no default and no fallback: an unknown or
-missing value stops the service at startup and lists the registered names.
+`AUTH_PROVIDER` is required. There is no default and no fallback: a missing or
+unknown value, or invalid provider settings, stop the service before it opens the
+database, and the error lists the registered names.
 
 | `AUTH_PROVIDER` | Who signs tokens | Required settings |
 | --- | --- | --- |
-| `jwt` | This service (Ed25519, `kid` rotation, JWKS published) | `AUTH_JWT_ISSUER`, `AUTH_JWT_AUDIENCE`, signing key file |
 | `firebase` | Google | `AUTH_FIREBASE_PROJECT_ID` |
 | `cognito` | AWS | `AUTH_COGNITO_REGION`, `AUTH_COGNITO_USER_POOL_ID`, `AUTH_COGNITO_CLIENT_ID`, `AUTH_COGNITO_TOKEN_USE` (`access` or `id`) |
-| `oidc` | Any OIDC issuer (Keycloak, Auth0, Zitadel, …) | `AUTH_OIDC_ISSUER`, `AUTH_OIDC_AUDIENCE`, optional `AUTH_OIDC_JWKS_URL` |
+| `oidc` | Any OIDC issuer (Keycloak, Auth0, Zitadel, …) | `AUTH_OIDC_ISSUER`, `AUTH_OIDC_AUDIENCE`, optional `AUTH_OIDC_JWKS_URL`, `AUTH_OIDC_ALGORITHMS` |
+| `jwt` (phase-03) | This service | Issuer, audience, signing key file |
 
-`firebase` and `cognito` are thin presets over one shared JWKS verifier. They only
-derive the issuer, audience rule and key URL:
+`firebase` and `cognito` are thin presets over one shared verifier
+(`internal/authn/jwks`); they only derive the issuer, audience rule and key URL:
 
 - Firebase: issuer `https://securetoken.google.com/<project>`, audience `<project>`,
   RS256 keys from Google's `securetoken` JWKS endpoint.
@@ -61,44 +63,50 @@ derive the issuer, audience rule and key URL:
   `<issuer>/.well-known/jwks.json`. Access tokens carry `client_id` instead of
   `aud`, so the preset checks `client_id` and `token_use=access`; ID tokens check
   `aud` and `token_use=id`.
+- OIDC: keys come from the discovery document unless `AUTH_OIDC_JWKS_URL` is set;
+  the document must name the configured issuer exactly.
 
-Every verifier accepts only an explicit algorithm list and requires `iss`, `aud`
-(or `client_id`), `exp` and a non-empty `sub`, with at most 30s of clock leeway.
+The verifier accepts only the configured asymmetric algorithms, requires `iss`,
+the audience claim, `exp` and a non-empty `sub`, rejects `iat`/`nbf` in the future,
+allows 30 seconds of clock leeway and refuses tokens over 8 KiB. It also matches
+the key type to the algorithm itself, independently of the JWT library. Keys are
+cached for an hour, refetched for unknown key IDs at most once a minute, and kept
+through key-server outages.
 
-### Identity mapping
+### Identity linking
 
 External subjects are strings, not our UUIDs. `user_identities (issuer, subject)`
-maps each external identity to an internal `user_id`. It is unique on
-`(issuer, subject)`. `AUTH_AUTO_PROVISION` decides whether an unknown identity
-gets a user on first request or receives 403. Changing providers keeps data:
-link the new identity to the existing user.
-
-`AUTH_PROVIDER` may list several providers (`firebase,jwt`) during a migration.
-The core routes on the unverified `iss` claim only to *choose* a verifier; that
-verifier then checks everything.
+maps each identity to one internal user; a user may have several identities.
+`POST /api/v1/users` creates a profile and links the caller's identity in one
+transaction. Every other `/api/v1` route requires a linked identity and answers
+403 `profile_required` otherwise. Changing providers keeps data: link the new
+identity to the existing user.
 
 ### Code-level extension (requires a rebuild)
 
-Uncommon providers (LDAP, SAML bridges, KMS-held keys) use the registry:
-
 ```text
-github.com/perdhevi/latihanAPI/auth   separate module, stdlib-only: Authenticator,
-                                      optional RouteRegistrar, Deps, Register
+github.com/perdhevi/latihanAPI/auth   separate module, stdlib-only: Identity,
+                                      Authenticator, optional RouteRegistrar,
+                                      Deps, Register, New, BearerToken
+auth/authtest                         conformance suite for JWT-based providers
 cmd/api/plugins.go                    blank imports of every compiled-in provider
 ```
 
 Add a provider by running `go get` on its module, adding its import to
-`plugins.go` and rebuilding the image. The built-in `jwt` provider has its own
-extension points (`KeySource`, `CredentialStore`) so its login flow can be kept
-while passwords or keys come from elsewhere. `auth/authtest` is a conformance
-suite that runs expired, wrong-audience, `alg:none`, wrong-key and tampered-token
-cases against any provider.
+`plugins.go` and rebuilding the image. Providers that serve their own endpoints
+(login, key publication) implement `RouteRegistrar`; those routes are mounted
+without authentication.
 
-### Built-in `jwt` provider requirements
+### Phase-03 plan: built-in `jwt` provider
 
-- Access tokens ~15 minutes; refresh tokens are opaque, stored hashed, rotated on
+- Ed25519 signing keys with `kid` rotation, published at `/.well-known/jwks.json`.
+- Access tokens ~15 minutes; refresh tokens opaque, stored hashed, rotated on
   every use, with reuse detection that revokes the chain.
-- Passwords hashed with argon2id; a dummy hash for unknown emails so timing does
-  not reveal which accounts exist; login rate limiting and lockout.
-- Endpoints under `/api/v1/auth` (`register`, `login`, `refresh`, `logout`) and
-  `/.well-known/jwks.json`. They are mounted only when `jwt` is active.
+- argon2id password hashing; a dummy hash for unknown emails so timing does not
+  reveal which accounts exist; login rate limiting and lockout.
+- Endpoints under `/api/v1/auth` (`register`, `login`, `refresh`, `logout`),
+  mounted only when `jwt` is active.
+- Extension points so the flow can be kept while passwords or keys come from
+  elsewhere (`KeySource`, `CredentialStore`).
+- `AUTH_PROVIDER` accepting a list (`firebase,jwt`) during provider migrations:
+  the unverified `iss` claim only chooses the verifier, which then checks everything.

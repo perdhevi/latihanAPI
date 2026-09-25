@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/perdhevi/latihanAPI/auth"
 	"github.com/perdhevi/latihanAPI/internal/profile"
 	"github.com/perdhevi/latihanAPI/internal/training"
 	"github.com/perdhevi/latihanAPI/internal/validation"
@@ -39,6 +40,7 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 type handlers struct {
 	training *training.Service
 	profiles *profile.Service
+	auth     auth.Authenticator
 	logger   *slog.Logger
 }
 
@@ -53,6 +55,8 @@ func (h *handlers) fail(w http.ResponseWriter, r *http.Request, err error, resou
 		writeError(w, http.StatusBadRequest, "invalid_reference", "referenced user or plan does not exist for this user")
 	case errors.Is(err, profile.ErrConflict), errors.Is(err, training.ErrConflict):
 		writeError(w, http.StatusConflict, "resource_in_use", "remove dependent records before deleting this resource")
+	case errors.Is(err, profile.ErrIdentityLinked):
+		writeError(w, http.StatusConflict, "profile_exists", "this identity already has a profile")
 	default:
 		h.logger.ErrorContext(r.Context(), "request failed", "request_id", r.Context().Value(requestIDKey{}), "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")

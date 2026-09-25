@@ -11,7 +11,8 @@ func (h *handlers) createUser(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	user, err := h.profiles.CreateUser(r.Context(), in)
+	caller := principalFrom(r.Context()).identity
+	user, err := h.profiles.CreateUser(r.Context(), in, profile.Identity{Issuer: caller.Issuer, Subject: caller.Subject})
 	if err != nil {
 		h.fail(w, r, err, "user")
 		return

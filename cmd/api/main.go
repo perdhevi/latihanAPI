@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/perdhevi/latihanAPI/auth"
 	"github.com/perdhevi/latihanAPI/internal/config"
 	"github.com/perdhevi/latihanAPI/internal/database"
 	"github.com/perdhevi/latihanAPI/internal/httpapi"
@@ -33,6 +34,13 @@ func run() error {
 	slog.SetDefault(logger)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Authentication is configured before the database so that a misconfigured
+	// provider fails immediately instead of after the database startup wait.
+	authenticator, err := auth.New(ctx, cfg.AuthProvider, auth.Deps{Getenv: os.Getenv, Logger: logger, HTTPClient: &http.Client{Timeout: 10 * time.Second}})
+	if err != nil {
+		return err
+	}
+	logger.Info("authentication provider ready", "provider", cfg.AuthProvider)
 	pool, err := database.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
@@ -41,7 +49,7 @@ func run() error {
 	sessions := training.NewService(training.NewPostgresRepository(pool))
 	profiles := profile.NewService(profile.NewPostgresRepository(pool))
 	server := &http.Server{Addr: cfg.HTTPAddr, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
-	server.Handler = httpapi.NewRouter(sessions, profiles, pool, logger)
+	server.Handler = httpapi.NewRouter(sessions, profiles, pool, authenticator, logger)
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.ListenAndServe() }()
 	logger.Info("server listening", "address", cfg.HTTPAddr)

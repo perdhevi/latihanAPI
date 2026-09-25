@@ -12,6 +12,13 @@ import (
 var ErrNotFound = errors.New("profile or measurement not found")
 var ErrConflict = errors.New("user has dependent records")
 var ErrUserMissing = errors.New("user does not exist")
+var ErrIdentityLinked = errors.New("identity already has a profile")
+
+// Identity is an authenticated caller as named by its authentication provider.
+type Identity struct {
+	Issuer  string
+	Subject string
+}
 
 type User struct {
 	ID          uuid.UUID `json:"id"`
