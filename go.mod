@@ -3,8 +3,10 @@ module github.com/perdhevi/latihanAPI
 go 1.27
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/perdhevi/latihanAPI/auth v0.0.0
 )
 
 require (
@@ -14,3 +16,5 @@ require (
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 )
+
+replace github.com/perdhevi/latihanAPI/auth => ./auth
