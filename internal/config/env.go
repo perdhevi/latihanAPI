@@ -53,7 +53,11 @@ func (e *Env) Get(name string) string {
 		return ""
 	}
 	// Editors and `echo` add a trailing newline that is never part of the secret.
-	return strings.TrimRight(string(content), "\r\n")
+	value = strings.TrimRight(string(content), "\r\n")
+	if value == "" {
+		e.fail(fmt.Errorf("%s_FILE: secret file is empty", name))
+	}
+	return value
 }
 
 // Err reports every problem met while reading settings so far.
