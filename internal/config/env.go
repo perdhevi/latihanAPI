@@ -48,8 +48,12 @@ func (e *Env) Get(name string) string {
 	}
 	defer func() { _ = f.Close() }()
 	content, err := io.ReadAll(io.LimitReader(f, maxSecretBytes+1))
-	if err != nil || len(content) > maxSecretBytes {
-		e.fail(fmt.Errorf("%s_FILE: unreadable or larger than 64 KiB", name))
+	if err != nil {
+		e.fail(fmt.Errorf("%s_FILE: read secret file: %w", name, err))
+		return ""
+	}
+	if len(content) > maxSecretBytes {
+		e.fail(fmt.Errorf("%s_FILE: secret file is larger than 64 KiB", name))
 		return ""
 	}
 	// Editors and `echo` add a trailing newline that is never part of the secret.
