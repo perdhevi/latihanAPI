@@ -48,6 +48,7 @@ func TestSecretFileErrors(t *testing.T) {
 		"missing file": func(t *testing.T) { t.Setenv("DATABASE_URL_FILE", filepath.Join(dir, "nope")) },
 		"oversized":    func(t *testing.T) { t.Setenv("DATABASE_URL_FILE", big) },
 		"empty file":   func(t *testing.T) { t.Setenv("DATABASE_URL_FILE", empty) },
+		"directory":    func(t *testing.T) { t.Setenv("DATABASE_URL_FILE", dir) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("DATABASE_URL", "")
@@ -65,6 +66,7 @@ func TestSecretFileErrors(t *testing.T) {
 				"missing file": "DATABASE_URL_FILE: open",
 				"oversized":    "larger than 64 KiB",
 				"empty file":   "secret file is empty",
+				"directory":    "read secret file:",
 			}[name]
 			if !strings.Contains(err.Error(), want) {
 				t.Fatalf("want underlying secret error %q, got %v", want, err)
