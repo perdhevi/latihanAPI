@@ -53,8 +53,10 @@ func Load() (Config, error) { return LoadFrom(NewEnv()) }
 
 func LoadFrom(env *Env) (Config, error) {
 	c, err := load(env)
-	if err == nil {
-		err = env.Err()
+	// A failed secret read returns an empty value. Report its cause before a
+	// secondary "required" error so operators can diagnose the actual failure.
+	if secretErr := env.Err(); secretErr != nil {
+		return Config{}, secretErr
 	}
 	if err != nil {
 		return Config{}, err

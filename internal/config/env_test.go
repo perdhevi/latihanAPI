@@ -38,6 +38,8 @@ func TestSecretFileErrors(t *testing.T) {
 	dir := t.TempDir()
 	big := filepath.Join(dir, "big")
 	_ = os.WriteFile(big, make([]byte, maxSecretBytes+1), 0o600)
+	empty := filepath.Join(dir, "empty")
+	_ = os.WriteFile(empty, []byte("\n"), 0o600)
 	for name, setup := range map[string]func(t *testing.T){
 		"both set": func(t *testing.T) {
 			t.Setenv("DATABASE_URL", "postgres://x")
@@ -45,6 +47,7 @@ func TestSecretFileErrors(t *testing.T) {
 		},
 		"missing file": func(t *testing.T) { t.Setenv("DATABASE_URL_FILE", filepath.Join(dir, "nope")) },
 		"oversized":    func(t *testing.T) { t.Setenv("DATABASE_URL_FILE", big) },
+		"empty file":   func(t *testing.T) { t.Setenv("DATABASE_URL_FILE", empty) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("DATABASE_URL", "")
@@ -56,6 +59,15 @@ func TestSecretFileErrors(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "postgres://") {
 				t.Fatal("error message leaks the secret")
+			}
+			want := map[string]string{
+				"both set":     "both set; use one",
+				"missing file": "DATABASE_URL_FILE: open",
+				"oversized":    "larger than 64 KiB",
+				"empty file":   "secret file is empty",
+			}[name]
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("want underlying secret error %q, got %v", want, err)
 			}
 		})
 	}
