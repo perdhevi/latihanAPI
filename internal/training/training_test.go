@@ -65,12 +65,12 @@ func TestCompare(t *testing.T) {
 		{ID: second, ExerciseInput: cardio("Run", 30, ptr(140))},
 		{ID: third, ExerciseInput: strength("Squat", 5, 60)},
 	}}
-	s := Session{ID: uuid.New(), PlanSnapshot: &p, UserID: uuid.New(), SessionInput: SessionInput{PlanID: &p.ID, Exercises: []SessionExercise{
+	s := Session{ID: uuid.New(), UserID: uuid.New(), SessionInput: SessionInput{PlanID: &p.ID, Exercises: []SessionExercise{
 		{PlanExerciseID: &first, ExerciseInput: strength("Back Squat", 10, 55)},
 		{PlanExerciseID: &second, ExerciseInput: cardio("Run", 25, ptr(145))},
 		{ExerciseInput: strength("Push-Up", 10, 0)},
 	}}}
-	c := Compare(s)
+	c := Compare(p, s)
 	if len(c.Exercises) != 4 || c.Exercises[0].Status != "matched" || c.Exercises[2].Status != "missed" || c.Exercises[3].Status != "unplanned" {
 		t.Fatalf("bad matching: %+v", c.Exercises)
 	}
@@ -85,7 +85,7 @@ func TestCompare(t *testing.T) {
 		t.Fatal("BPM difference incorrect")
 	}
 	s.Exercises[1].AvgBPM = nil
-	if Compare(s).Exercises[1].AvgBPMDelta != nil {
+	if Compare(p, s).Exercises[1].AvgBPMDelta != nil {
 		t.Fatal("missing BPM must remain unknown")
 	}
 }

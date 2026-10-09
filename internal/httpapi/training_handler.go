@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -187,4 +188,72 @@ func (h *handlers) listSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writePage(w, sessions, page, func(s training.Session) validation.Cursor { return validation.Cursor{Time: s.PerformedAt, ID: s.ID} })
+}
+
+func (h *handlers) listCatalog(w http.ResponseWriter, r *http.Request) {
+	q, ok := queryValues(w, r, "limit", "cursor", "category")
+	if !ok {
+		return
+	}
+	page, ok := pagination(w, q)
+	if !ok {
+		return
+	}
+	entries, err := h.training.ListCatalog(r.Context(), q.Get("category"), page)
+	if err != nil {
+		h.fail(w, r, err, "exercise")
+		return
+	}
+	writePage(w, entries, page, func(e training.CatalogExercise) validation.Cursor {
+		return validation.Cursor{Time: e.CreatedAt, ID: e.ID}
+	})
+}
+func (h *handlers) getCatalogExercise(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	entry, err := h.training.GetCatalogExercise(r.Context(), id)
+	if err != nil {
+		h.fail(w, r, err, "exercise")
+		return
+	}
+	setETag(w, entry.UpdatedAt)
+	writeJSON(w, http.StatusOK, entry)
+}
+
+// progress answers "did I do what I planned?" for the caller's own sessions.
+func (h *handlers) progress(w http.ResponseWriter, r *http.Request) {
+	q, ok := queryValues(w, r, "exercise_id", "from", "to", "bucket")
+	if !ok {
+		return
+	}
+	query := training.ProgressQuery{Bucket: q.Get("bucket")}
+	if query.Bucket == "" {
+		query.Bucket = "week"
+	}
+	if q.Has("exercise_id") {
+		id, ok := parseUUID(w, q.Get("exercise_id"))
+		if !ok {
+			return
+		}
+		query.ExerciseID = &id
+	}
+	for name, target := range map[string]*time.Time{"from": &query.From, "to": &query.To} {
+		if !q.Has(name) {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, q.Get(name))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "validation_failed", name+" must be an RFC3339 timestamp")
+			return
+		}
+		*target = t
+	}
+	points, err := h.training.Progress(r.Context(), owner(r), query)
+	if err != nil {
+		h.fail(w, r, err, "exercise")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"bucket": query.Bucket, "data": points})
 }

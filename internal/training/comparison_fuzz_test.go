@@ -27,7 +27,7 @@ func FuzzCompare(f *testing.F) {
 			}
 			p.Exercises = append(p.Exercises, PlanExercise{ID: uuid.New(), ExerciseInput: plan[i]})
 		}
-		s := Session{ID: uuid.New(), PlanSnapshot: &p, SessionInput: SessionInput{PlanID: &p.ID}}
+		s := Session{ID: uuid.New(), SessionInput: SessionInput{PlanID: &p.ID}}
 		for i := range session {
 			if validateExercise(&session[i]) != nil {
 				return
@@ -42,7 +42,7 @@ func FuzzCompare(f *testing.F) {
 		if validatePlanLinks(s.SessionInput, &p) != nil {
 			return
 		}
-		raw, err := json.Marshal(Compare(s))
+		raw, err := json.Marshal(Compare(p, s))
 		if err != nil {
 			t.Fatalf("comparison cannot be encoded (NaN or Inf?): %v", err)
 		}

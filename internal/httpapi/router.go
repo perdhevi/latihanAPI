@@ -49,6 +49,9 @@ func NewRouter(sessions *training.Service, profiles *profile.Service, db Pinger,
 	mux.HandleFunc("PUT /api/v1/plans/{id}", h.withUser(h.updatePlan))
 	mux.HandleFunc("DELETE /api/v1/plans/{id}", h.withUser(h.deletePlan))
 	mux.HandleFunc("GET /api/v1/plans/{id}/comparison", h.withUser(h.comparison))
+	mux.HandleFunc("GET /api/v1/exercises", h.withUser(h.listCatalog))
+	mux.HandleFunc("GET /api/v1/exercises/{id}", h.withUser(h.getCatalogExercise))
+	mux.HandleFunc("GET /api/v1/stats/progress", h.withUser(h.progress))
 	if h.account != nil {
 		mux.HandleFunc("GET /api/v1/account/export", h.withUser(h.exportAccount))
 		mux.HandleFunc("DELETE /api/v1/account", h.authenticated(h.eraseAccount))
@@ -68,7 +71,9 @@ func NewRouter(sessions *training.Service, profiles *profile.Service, db Pinger,
 		"/api/v1/sessions": "GET, HEAD, POST", "/api/v1/sessions/{id}": "GET, HEAD, PUT, DELETE",
 		"/api/v1/plans": "GET, HEAD, POST", "/api/v1/plans/{id}": "GET, HEAD, PUT, DELETE",
 		"/api/v1/plans/{id}/comparison": "GET, HEAD",
-		"/api/v1/users":                 "POST", "/api/v1/users/{userID}": "GET, HEAD, PUT, DELETE",
+		"/api/v1/exercises":             "GET, HEAD", "/api/v1/exercises/{id}": "GET, HEAD",
+		"/api/v1/stats/progress": "GET, HEAD",
+		"/api/v1/users":          "POST", "/api/v1/users/{userID}": "GET, HEAD, PUT, DELETE",
 		"/api/v1/users/{userID}/measurements":      "GET, HEAD, POST",
 		"/api/v1/users/{userID}/measurements/{id}": "GET, HEAD, PUT, DELETE",
 		"/api/v1/account/export":                   "GET, HEAD",

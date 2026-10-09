@@ -116,12 +116,14 @@ func TestErasureIntegration(t *testing.T) {
 		t.Fatalf("erase: %d %s", w.Code, w.Body)
 	}
 	for table, query := range map[string]string{
-		"user_profiles":    `SELECT count(*) FROM user_profiles WHERE id=$1`,
-		"user_identities":  `SELECT count(*) FROM user_identities WHERE user_id=$1`,
-		"measurements":     `SELECT count(*) FROM measurements WHERE user_id=$1`,
-		"plans":            `SELECT count(*) FROM plans WHERE user_id=$1`,
-		"sessions":         `SELECT count(*) FROM sessions WHERE user_id=$1`,
-		"idempotency_keys": `SELECT count(*) FROM idempotency_keys WHERE subject='athlete' AND $1::uuid IS NOT NULL`,
+		"user_profiles":     `SELECT count(*) FROM user_profiles WHERE id=$1`,
+		"user_identities":   `SELECT count(*) FROM user_identities WHERE user_id=$1`,
+		"measurements":      `SELECT count(*) FROM measurements WHERE user_id=$1`,
+		"plans":             `SELECT count(*) FROM plans WHERE user_id=$1`,
+		"sessions":          `SELECT count(*) FROM sessions WHERE user_id=$1`,
+		"plan_exercises":    `SELECT count(*) FROM plan_exercises WHERE plan_id IN (SELECT id FROM plans WHERE user_id=$1)`,
+		"session_exercises": `SELECT count(*) FROM session_exercises WHERE session_id IN (SELECT id FROM sessions WHERE user_id=$1)`,
+		"idempotency_keys":  `SELECT count(*) FROM idempotency_keys WHERE subject='athlete' AND $1::uuid IS NOT NULL`,
 	} {
 		if n := count(t, pool, query, me); n != 0 {
 			t.Errorf("%s still holds %d rows of the erased user", table, n)

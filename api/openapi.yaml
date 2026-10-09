@@ -1,8 +1,8 @@
 openapi: "3.0.3"
 info:
   title: "latihanApi"
-  version: "0.8.0"
-  description: "Personal sessions, plans, profiles and measurement history. /exercises has been removed. Single-record responses carry an ETag; PUT and DELETE accept If-Match for optimistic concurrency. Creating POSTs accept Idempotency-Key for safe retries. Lists use cursor pagination (limit, cursor, next_cursor). Requests are rate limited per client address, per account, and more strictly on /api/v1/auth; limited requests get 429 with Retry-After. Every /api/v1 operation except /api/v1/auth/* requires a bearer token from the configured provider. The /api/v1/auth endpoints and /.well-known/jwks.json exist only with the built-in jwt provider. POST /api/v1/users links the caller's identity to a new profile; other operations require that profile. Callers only ever see and change their own records: owners come from the token, never from input, and other users' records return 404. All responses include X-Request-ID. Input bodies are limited to 1 MiB; unknown JSON fields, unknown/repeated query parameters and multiple JSON values are rejected. Strings are trimmed. PUT fully replaces editable fields; no upserts. UUIDs and creation timestamps are server-managed. HTTP method errors use the same Error schema."
+  version: "0.9.0"
+  description: "Personal sessions, plans, profiles and measurement history, with a shared read-only exercise catalog (/exercises) that plans and sessions can reference, and planned-versus-done statistics (/stats/progress). Single-record responses carry an ETag; PUT and DELETE accept If-Match for optimistic concurrency. Creating POSTs accept Idempotency-Key for safe retries. Lists use cursor pagination (limit, cursor, next_cursor). Requests are rate limited per client address, per account, and more strictly on /api/v1/auth; limited requests get 429 with Retry-After. Every /api/v1 operation except /api/v1/auth/* requires a bearer token from the configured provider. The /api/v1/auth endpoints and /.well-known/jwks.json exist only with the built-in jwt provider. POST /api/v1/users links the caller's identity to a new profile; other operations require that profile. Callers only ever see and change their own records: owners come from the token, never from input, and other users' records return 404. All responses include X-Request-ID. Input bodies are limited to 1 MiB; unknown JSON fields, unknown/repeated query parameters and multiple JSON values are rejected. Strings are trimmed. PUT fully replaces editable fields; no upserts. UUIDs and creation timestamps are server-managed. HTTP method errors use the same Error schema."
 servers:
   -
     url: "http://localhost:8080"
@@ -19,6 +19,10 @@ tags:
     name: "Sessions"
   -
     name: "Plans"
+  -
+    name: "Exercises"
+  -
+    name: "Stats"
   -
     name: "Users"
   -
@@ -549,6 +553,12 @@ paths:
                 "$ref": "#/components/schemas/Plan"
         "400":
           description: "Invalid JSON, UUID, input, query, owner or plan reference."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "409":
+          description: "plan_in_use: sessions already use this plan, so its exercises cannot change."
           content:
             "application/json":
               schema:
@@ -1167,7 +1177,7 @@ paths:
       operationId: "comparePlanWithSession"
       tags:
         - "Plans"
-      summary: "Compare the attached plan snapshot with actual session results"
+      summary: "Compare a plan with the results of a session that followed it"
       parameters:
         -
           name: "session_id"
@@ -1200,6 +1210,207 @@ paths:
                 "$ref": "#/components/schemas/Error"
         "404":
           description: "Resource missing, belongs to another user, or session not attached to the requested plan."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/exercises":
+    get:
+      operationId: "listExercises"
+      tags:
+        - "Exercises"
+      summary: "List the shared exercise catalog"
+      description: "Read-only and the same for every user. Ordered alphabetically by name, then id. Use an entry's id as exercise_id in plans and sessions."
+      parameters:
+        -
+          name: "limit"
+          in: "query"
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+            default: 20
+        -
+          name: "cursor"
+          in: "query"
+          description: "next_cursor from the previous page; omit for the first page. Opaque."
+          schema:
+            type: "string"
+            maxLength: 128
+        -
+          name: "category"
+          in: "query"
+          schema:
+            type: "string"
+            enum:
+              - "strength"
+              - "cardio"
+              - "mobility"
+              - "stretching"
+      responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
+        "200":
+          description: "Page"
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                additionalProperties: false
+                required:
+                  - "items"
+                  - "limit"
+                  - "next_cursor"
+                properties:
+                  items:
+                    type: "array"
+                    items:
+                      "$ref": "#/components/schemas/CatalogExercise"
+                  limit:
+                    type: "integer"
+                  next_cursor:
+                    type: "string"
+                    nullable: true
+        "400":
+          description: "Invalid query."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/exercises/{id}":
+    parameters:
+      -
+        name: "id"
+        in: "path"
+        required: true
+        schema:
+          type: "string"
+          format: "uuid"
+          description: "Nonzero UUID"
+    get:
+      operationId: "getExercise"
+      tags:
+        - "Exercises"
+      summary: "Get one catalog exercise"
+      responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
+        "200":
+          description: "The exercise"
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/CatalogExercise"
+        "400":
+          description: "Invalid ID."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: "No such catalog exercise."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: "Unexpected error; internal details are not exposed."
+          content:
+            "application/json":
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/api/v1/stats/progress":
+    get:
+      operationId: "getProgress"
+      tags:
+        - "Stats"
+      summary: "Planned versus done, per day, week or month"
+      description: "Totals the caller's sessions in from..to (to exclusive; default the last 90 days, at most 366 days) per bucket, oldest first. planned is everything the plans of those sessions asked for, including exercises the session skipped; actual is everything performed, including unplanned extras; unplanned is the part of actual that no plan asked for. The completion percentages count only planned work that was done and are null when the plans asked for none of that metric. Sessions without a plan add to actual and unplanned only. With exercise_id the totals cover just that catalog exercise; free-form exercises are only counted when it is omitted."
+      parameters:
+        -
+          name: "exercise_id"
+          in: "query"
+          schema:
+            type: "string"
+            format: "uuid"
+        -
+          name: "from"
+          in: "query"
+          schema:
+            type: "string"
+            format: "date-time"
+        -
+          name: "to"
+          in: "query"
+          schema:
+            type: "string"
+            format: "date-time"
+        -
+          name: "bucket"
+          in: "query"
+          schema:
+            type: "string"
+            enum:
+              - "day"
+              - "week"
+              - "month"
+            default: "week"
+      responses:
+        "429":
+          "$ref": "#/components/responses/RateLimited"
+        "401":
+          "$ref": "#/components/responses/Unauthorized"
+        "403":
+          "$ref": "#/components/responses/ProfileRequired"
+        "503":
+          "$ref": "#/components/responses/ServiceUnavailable"
+        "200":
+          description: "Progress"
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                additionalProperties: false
+                required:
+                  - "bucket"
+                  - "data"
+                properties:
+                  bucket:
+                    type: "string"
+                    enum:
+                      - "day"
+                      - "week"
+                      - "month"
+                  data:
+                    type: "array"
+                    items:
+                      "$ref": "#/components/schemas/ProgressPoint"
+        "400":
+          description: "Invalid query."
           content:
             "application/json":
               schema:
@@ -1589,10 +1800,12 @@ components:
     ExerciseInput:
       type: "object"
       additionalProperties: false
-      required:
-        - "name"
-        - "kind"
       properties:
+        exercise_id:
+          type: "string"
+          format: "uuid"
+          description: "Catalog exercise (GET /api/v1/exercises); null for a free-form exercise."
+          nullable: true
         name:
           type: "string"
           maxLength: 200
@@ -1602,6 +1815,11 @@ components:
           enum:
             - "strength"
             - "cardio"
+            - "mobility"
+            - "stretching"
+        notes:
+          type: "string"
+          maxLength: 1000
         sets:
           type: "array"
           items:
@@ -1619,7 +1837,52 @@ components:
           minimum: 1
           maximum: 300
           nullable: true
-      description: "Names are trimmed, kind is lowercased. Strength requires 1..100 sets with explicit weight_kg (0 for bodyweight), and no non-null cardio metrics. Cardio requires minutes and no sets; avg_bpm is optional. Exercise order and set order are preserved."
+      description: "Strength exercises have 1..100 sets with explicit weight_kg (0 for bodyweight) and no minutes or avg_bpm. Every other kind (cardio, mobility, stretching) is timed: minutes is required, sets are not allowed, avg_bpm is optional. Exercise order and set order are preserved. With exercise_id, name and kind may be omitted and are taken from the catalog; if kind is given it must equal the catalog category. Without exercise_id, name and kind are required. Names are trimmed and kind is lowercased."
+    ExerciseDetails:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "name"
+        - "kind"
+        - "notes"
+      properties:
+        exercise_id:
+          type: "string"
+          format: "uuid"
+          description: "Catalog exercise (GET /api/v1/exercises); null for a free-form exercise."
+          nullable: true
+        name:
+          type: "string"
+          maxLength: 200
+          minLength: 1
+        kind:
+          type: "string"
+          enum:
+            - "strength"
+            - "cardio"
+            - "mobility"
+            - "stretching"
+        notes:
+          type: "string"
+          maxLength: 1000
+        sets:
+          type: "array"
+          items:
+            "$ref": "#/components/schemas/Set"
+          maxItems: 100
+          nullable: true
+        minutes:
+          type: "number"
+          exclusiveMinimum: true
+          minimum: 0
+          maximum: 1440
+          nullable: true
+        avg_bpm:
+          type: "integer"
+          minimum: 1
+          maximum: 300
+          nullable: true
+      description: "Strength exercises have 1..100 sets with explicit weight_kg (0 for bodyweight) and no minutes or avg_bpm. Every other kind (cardio, mobility, stretching) is timed: minutes is required, sets are not allowed, avg_bpm is optional. Exercise order and set order are preserved. "
       oneOf:
         -
           properties:
@@ -1647,6 +1910,8 @@ components:
             kind:
               enum:
                 - "cardio"
+                - "mobility"
+                - "stretching"
             sets:
               type: "array"
               nullable: true
@@ -1667,11 +1932,17 @@ components:
         - "id"
         - "name"
         - "kind"
+        - "notes"
       properties:
         id:
           type: "string"
           format: "uuid"
-          description: "Nonzero UUID"
+          description: "Nonzero UUID; sessions refer to it with plan_exercise_id."
+        exercise_id:
+          type: "string"
+          format: "uuid"
+          description: "Catalog exercise (GET /api/v1/exercises); null for a free-form exercise."
+          nullable: true
         name:
           type: "string"
           maxLength: 200
@@ -1681,6 +1952,11 @@ components:
           enum:
             - "strength"
             - "cardio"
+            - "mobility"
+            - "stretching"
+        notes:
+          type: "string"
+          maxLength: 1000
         sets:
           type: "array"
           items:
@@ -1698,7 +1974,7 @@ components:
           minimum: 1
           maximum: 300
           nullable: true
-      description: "Names are trimmed, kind is lowercased. Strength requires 1..100 sets with explicit weight_kg (0 for bodyweight), and no non-null cardio metrics. Cardio requires minutes and no sets; avg_bpm is optional. Exercise order and set order are preserved."
+      description: "A planned exercise. Strength exercises have 1..100 sets with explicit weight_kg (0 for bodyweight) and no minutes or avg_bpm. Every other kind (cardio, mobility, stretching) is timed: minutes is required, sets are not allowed, avg_bpm is optional. Exercise order and set order are preserved. "
       oneOf:
         -
           properties:
@@ -1726,6 +2002,8 @@ components:
             kind:
               enum:
                 - "cardio"
+                - "mobility"
+                - "stretching"
             sets:
               type: "array"
               nullable: true
@@ -1745,11 +2023,17 @@ components:
       required:
         - "name"
         - "kind"
+        - "notes"
       properties:
         plan_exercise_id:
           type: "string"
           format: "uuid"
           description: "Nonzero UUID"
+          nullable: true
+        exercise_id:
+          type: "string"
+          format: "uuid"
+          description: "Catalog exercise (GET /api/v1/exercises); null for a free-form exercise."
           nullable: true
         name:
           type: "string"
@@ -1760,6 +2044,11 @@ components:
           enum:
             - "strength"
             - "cardio"
+            - "mobility"
+            - "stretching"
+        notes:
+          type: "string"
+          maxLength: 1000
         sets:
           type: "array"
           items:
@@ -1777,7 +2066,7 @@ components:
           minimum: 1
           maximum: 300
           nullable: true
-      description: "Names are trimmed, kind is lowercased. Strength requires 1..100 sets with explicit weight_kg (0 for bodyweight), and no non-null cardio metrics. Cardio requires minutes and no sets; avg_bpm is optional. Exercise order and set order are preserved."
+      description: "A performed exercise. Without plan_exercise_id it is extra, unplanned work. Strength exercises have 1..100 sets with explicit weight_kg (0 for bodyweight) and no minutes or avg_bpm. Every other kind (cardio, mobility, stretching) is timed: minutes is required, sets are not allowed, avg_bpm is optional. Exercise order and set order are preserved. "
       oneOf:
         -
           properties:
@@ -1805,6 +2094,8 @@ components:
             kind:
               enum:
                 - "cardio"
+                - "mobility"
+                - "stretching"
             sets:
               type: "array"
               nullable: true
@@ -1986,7 +2277,7 @@ components:
           maxItems: 100
           items:
             "$ref": "#/components/schemas/ExerciseInput"
-      description: "Full replacement. Owner cannot change. Every write generates new exercise entry IDs. Existing session snapshots remain unchanged."
+      description: "Full replacement. Owner cannot change. Exercises may link catalog entries with exercise_id. Every write generates new exercise entry IDs, except that a plan sessions already use keeps its exercises: sending them unchanged only updates name and notes, anything else returns 409 plan_in_use (create a new plan for new targets)."
     Plan:
       type: "object"
       additionalProperties: false
@@ -2057,7 +2348,7 @@ components:
           maxItems: 100
           items:
             "$ref": "#/components/schemas/SessionExercise"
-      description: "Full replacement. The owner is always the caller and is not part of the input. Optional plan_id must be one of the caller's plans. plan_exercise_id links each actual entry to an entry in its saved plan snapshot and must not repeat. Omitted plan_exercise_id means unplanned. Keeping the same plan_id retains the original snapshot; changing/reattaching captures the current plan; null/omitted plan_id detaches. Times are nonzero RFC3339."
+      description: "Full replacement. The owner is always the caller and is not part of the input. Optional plan_id must be one of the caller's plans. plan_exercise_id links each actual entry to an exercise of that plan and must not repeat. Omitted plan_exercise_id means unplanned. Null/omitted plan_id detaches the session from any plan. Exercises may link catalog entries with exercise_id. Times are nonzero RFC3339."
     Session:
       type: "object"
       additionalProperties: false
@@ -2069,7 +2360,6 @@ components:
         - "performed_at"
         - "plan_id"
         - "exercises"
-        - "plan_snapshot"
         - "created_at"
         - "updated_at"
       properties:
@@ -2102,52 +2392,85 @@ components:
           maxItems: 100
           items:
             "$ref": "#/components/schemas/SessionExercise"
-        plan_snapshot:
-          type: "object"
-          additionalProperties: false
-          required:
-            - "id"
-            - "user_id"
-            - "name"
-            - "notes"
-            - "exercises"
-            - "created_at"
-            - "updated_at"
-          properties:
-            id:
-              type: "string"
-              format: "uuid"
-              description: "Nonzero UUID"
-            user_id:
-              type: "string"
-              format: "uuid"
-              description: "Nonzero UUID"
-            name:
-              type: "string"
-              maxLength: 200
-              minLength: 1
-            notes:
-              type: "string"
-              maxLength: 4000
-            exercises:
-              type: "array"
-              minItems: 1
-              maxItems: 100
-              items:
-                "$ref": "#/components/schemas/PlanExercise"
-            created_at:
-              type: "string"
-              format: "date-time"
-            updated_at:
-              type: "string"
-              format: "date-time"
-          nullable: true
         created_at:
           type: "string"
           format: "date-time"
         updated_at:
           type: "string"
           format: "date-time"
+    CatalogExercise:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "id"
+        - "name"
+        - "description"
+        - "category"
+        - "muscle_group"
+        - "equipment"
+        - "created_at"
+        - "updated_at"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+        name:
+          type: "string"
+        description:
+          type: "string"
+        category:
+          type: "string"
+          enum:
+            - "strength"
+            - "cardio"
+            - "mobility"
+            - "stretching"
+        muscle_group:
+          type: "string"
+        equipment:
+          type: "string"
+        created_at:
+          type: "string"
+          format: "date-time"
+        updated_at:
+          type: "string"
+          format: "date-time"
+    ProgressPoint:
+      type: "object"
+      additionalProperties: false
+      required:
+        - "bucket"
+        - "sessions"
+        - "planned"
+        - "actual"
+        - "unplanned"
+        - "delta"
+        - "volume_completion_pct"
+        - "minutes_completion_pct"
+      properties:
+        bucket:
+          type: "string"
+          format: "date-time"
+          description: "Start of the day, ISO week (Monday) or month, in UTC."
+        sessions:
+          type: "integer"
+          description: "Sessions in the bucket, with or without a plan."
+        planned:
+          "$ref": "#/components/schemas/Totals"
+        actual:
+          "$ref": "#/components/schemas/Totals"
+        unplanned:
+          "$ref": "#/components/schemas/Totals"
+        delta:
+          "$ref": "#/components/schemas/Totals"
+        volume_completion_pct:
+          type: "number"
+          nullable: true
+          description: "Planned strength volume that was done, in percent; may exceed 100."
+        minutes_completion_pct:
+          type: "number"
+          nullable: true
+          description: "Planned minutes that were done, in percent; may exceed 100."
     Totals:
       type: "object"
       additionalProperties: false
@@ -2243,74 +2566,12 @@ components:
             - "missed"
             - "unplanned"
         planned:
-          type: "object"
-          additionalProperties: false
-          required:
-            - "name"
-            - "kind"
-          properties:
-            name:
-              type: "string"
-              maxLength: 200
-              minLength: 1
-            kind:
-              type: "string"
-              enum:
-                - "strength"
-                - "cardio"
-            sets:
-              type: "array"
-              items:
-                "$ref": "#/components/schemas/Set"
-              maxItems: 100
-              nullable: true
-            minutes:
-              type: "number"
-              exclusiveMinimum: true
-              minimum: 0
-              maximum: 1440
-              nullable: true
-            avg_bpm:
-              type: "integer"
-              minimum: 1
-              maximum: 300
-              nullable: true
-          description: "Names are trimmed, kind is lowercased. Strength requires 1..100 sets with explicit weight_kg (0 for bodyweight), and no non-null cardio metrics. Cardio requires minutes and no sets; avg_bpm is optional. Exercise order and set order are preserved."
+          allOf:
+            - "$ref": "#/components/schemas/ExerciseDetails"
           nullable: true
         actual:
-          type: "object"
-          additionalProperties: false
-          required:
-            - "name"
-            - "kind"
-          properties:
-            name:
-              type: "string"
-              maxLength: 200
-              minLength: 1
-            kind:
-              type: "string"
-              enum:
-                - "strength"
-                - "cardio"
-            sets:
-              type: "array"
-              items:
-                "$ref": "#/components/schemas/Set"
-              maxItems: 100
-              nullable: true
-            minutes:
-              type: "number"
-              exclusiveMinimum: true
-              minimum: 0
-              maximum: 1440
-              nullable: true
-            avg_bpm:
-              type: "integer"
-              minimum: 1
-              maximum: 300
-              nullable: true
-          description: "Names are trimmed, kind is lowercased. Strength requires 1..100 sets with explicit weight_kg (0 for bodyweight), and no non-null cardio metrics. Cardio requires minutes and no sets; avg_bpm is optional. Exercise order and set order are preserved."
+          allOf:
+            - "$ref": "#/components/schemas/ExerciseDetails"
           nullable: true
         planned_totals:
           "$ref": "#/components/schemas/Totals"
@@ -2364,7 +2625,7 @@ components:
           type: "array"
           items:
             "$ref": "#/components/schemas/ExerciseComparison"
-      description: "Uses the session's saved plan version. All deltas are actual minus planned. Planned entries come first in plan order; unplanned entries follow in session order. Sets are compared by ordinal position. Missing records are null, not invented measurements. Matched means linked, not that the target was met. BPM is not aggregated across exercises."
+      description: "Plan exercises never change once a session uses the plan, so this is the plan the session was held against. All deltas are actual minus planned. Planned entries come first in plan order; unplanned entries follow in session order. Sets are compared by ordinal position. Missing records are null, not invented measurements. Matched means linked, not that the target was met. BPM is not aggregated across exercises."
     Error:
       type: "object"
       additionalProperties: false
@@ -2409,6 +2670,8 @@ components:
                 - "email_taken"
                 - "invalid_credentials"
                 - "invalid_refresh_token"
+                - "exercise_not_found"
+                - "plan_in_use"
             message:
               type: "string"
     Health:

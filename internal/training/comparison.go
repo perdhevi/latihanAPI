@@ -102,10 +102,11 @@ func compareExercise(id *uuid.UUID, planned, actual *ExerciseInput) ExerciseComp
 	return c
 }
 
-// Compare uses the immutable plan snapshot, never the plan's current contents.
-// Deltas are actual minus planned; missing BPM readings remain unknown (null).
-func Compare(session Session) Comparison {
-	plan := session.PlanSnapshot
+// Compare lines up a session with its plan. The exercises of a plan that has
+// sessions cannot change, so the plan as stored is what the session was held
+// against. Deltas are actual minus planned; missing BPM readings remain
+// unknown (null).
+func Compare(plan Plan, session Session) Comparison {
 	c := Comparison{PlanID: plan.ID, SessionID: session.ID, UserID: session.UserID, PlanUpdatedAt: plan.UpdatedAt, Exercises: make([]ExerciseComparison, 0)}
 	actual := make(map[uuid.UUID]*ExerciseInput)
 	for i := range session.Exercises {

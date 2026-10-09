@@ -119,22 +119,26 @@ func TestTrainingAPIIntegration(t *testing.T) {
 	call(t, h, "DELETE", planURL, nil, 409, nil)
 	call(t, h, "DELETE", userURL, nil, 409, nil)
 
-	// A later edit of the reusable plan must not rewrite history.
+	// A plan that sessions use keeps its targets, so history cannot be rewritten;
+	// its name can still change, and its exercises keep their ids.
 	originalPlanTime := plan.UpdatedAt
 	planInput.Exercises[0].Sets[0].WeightKG = number(100)
+	call(t, h, "PUT", planURL, planInput, 409, nil)
+	planInput.Exercises[0].Sets[0].WeightKG = number(50)
+	planInput.Name = "Leg day v2"
 	call(t, h, "PUT", planURL, planInput, 200, &plan)
-	if !plan.UpdatedAt.After(originalPlanTime) {
-		t.Fatal("plan timestamp did not advance")
+	if !plan.UpdatedAt.After(originalPlanTime) || plan.Name != "Leg day v2" || plan.Exercises[0].ID != squatID || plan.Exercises[1].ID != runningID {
+		t.Fatalf("plan rename: %+v", plan)
 	}
 	call(t, h, "GET", comparisonURL, nil, 200, &comparison)
-	if comparison.PlannedTotals.VolumeKG != 800 || !comparison.PlanUpdatedAt.Equal(originalPlanTime) {
-		t.Fatal("plan edit changed historical comparison")
+	if comparison.PlannedTotals.VolumeKG != 800 {
+		t.Fatal("plan rename changed the comparison")
 	}
 	in.Name = "Edited session"
 	oldCreated, oldUpdated := session.CreatedAt, session.UpdatedAt
 	call(t, h, "PUT", sessionURL, in, 200, &session)
-	if !session.CreatedAt.Equal(oldCreated) || !session.UpdatedAt.After(oldUpdated) || !session.PlanSnapshot.UpdatedAt.Equal(originalPlanTime) {
-		t.Fatal("same-plan update must retain snapshot")
+	if !session.CreatedAt.Equal(oldCreated) || !session.UpdatedAt.After(oldUpdated) {
+		t.Fatal("session update lost its timestamps")
 	}
 	call(t, h, "GET", sessionURL, nil, 200, &session)
 
@@ -142,7 +146,11 @@ func TestTrainingAPIIntegration(t *testing.T) {
 	callAs(t, h, "other", "PUT", sessionURL, in, 404, nil)
 	wrong := in
 	wrong.Exercises = append([]training.SessionExercise(nil), in.Exercises...)
-	wrong.Exercises[0].PlanExerciseID = &plan.Exercises[0].ID
+	missing := uuid.New()
+	wrong.Exercises[0].PlanExerciseID = &missing
+	call(t, h, "PUT", sessionURL, wrong, 400, nil)
+	wrong.Exercises[1].PlanExerciseID = &squatID
+	wrong.Exercises[0].PlanExerciseID = &squatID
 	call(t, h, "PUT", sessionURL, wrong, 400, nil)
 	call(t, h, "GET", comparisonURL, nil, 200, &comparison)
 	if comparison.PlannedTotals.VolumeKG != 800 {
@@ -154,7 +162,7 @@ func TestTrainingAPIIntegration(t *testing.T) {
 	standalone := training.SessionInput{Name: "Walk", PerformedAt: in.PerformedAt.Add(time.Hour), Exercises: []training.SessionExercise{{ExerciseInput: training.ExerciseInput{Name: "Walk", Kind: "cardio", Minutes: number(15)}}}}
 	var second training.Session
 	call(t, h, "POST", "/api/v1/sessions", standalone, 201, &second)
-	if second.PlanSnapshot != nil || second.PlanID != nil {
+	if second.PlanID != nil {
 		t.Fatal("standalone session has a plan")
 	}
 	var page struct {
@@ -175,7 +183,7 @@ func TestTrainingAPIIntegration(t *testing.T) {
 	}
 	call(t, h, "GET", planURL+"/comparison?session_id="+second.ID.String(), nil, 404, nil)
 
-	// Detaching removes the snapshot; reattaching captures the current plan version.
+	// Detaching drops the links to the plan; reattaching restores them.
 	detached := in
 	detached.PlanID = nil
 	detached.Exercises = append([]training.SessionExercise(nil), in.Exercises...)
@@ -183,16 +191,16 @@ func TestTrainingAPIIntegration(t *testing.T) {
 		detached.Exercises[i].PlanExerciseID = nil
 	}
 	call(t, h, "PUT", sessionURL, detached, 200, &session)
-	if session.PlanSnapshot != nil {
-		t.Fatal("detached plan snapshot remains")
+	if session.PlanID != nil {
+		t.Fatal("detached plan remains")
 	}
 	detached.PlanID = &plan.ID
 	detached.Exercises[0].PlanExerciseID = &plan.Exercises[0].ID
 	detached.Exercises[1].PlanExerciseID = &plan.Exercises[1].ID
 	call(t, h, "PUT", sessionURL, detached, 200, &session)
 	call(t, h, "GET", comparisonURL, nil, 200, &comparison)
-	if comparison.PlannedTotals.VolumeKG != 1200 {
-		t.Fatal("reattach did not take current plan")
+	if comparison.PlannedTotals.VolumeKG != 800 {
+		t.Fatal("reattach did not restore the plan comparison")
 	}
 
 	// User profile history uses measurement time, not insertion time.

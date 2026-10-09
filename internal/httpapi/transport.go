@@ -52,7 +52,9 @@ func (h *handlers) fail(w http.ResponseWriter, r *http.Request, err error, resou
 	case errors.Is(err, profile.ErrNotFound), errors.Is(err, training.ErrNotFound):
 		writeError(w, http.StatusNotFound, resource+"_not_found", resource+" not found")
 	case errors.Is(err, profile.ErrUserMissing), errors.Is(err, training.ErrReference):
-		writeError(w, http.StatusBadRequest, "invalid_reference", "referenced user or plan does not exist for this user")
+		writeError(w, http.StatusBadRequest, "invalid_reference", "referenced user, plan or exercise does not exist for this user")
+	case errors.Is(err, training.ErrPlanInUse):
+		writeError(w, http.StatusConflict, "plan_in_use", "sessions already use this plan, so its exercises cannot change; create a new plan instead")
 	case errors.Is(err, profile.ErrConflict), errors.Is(err, training.ErrConflict):
 		writeError(w, http.StatusConflict, "resource_in_use", "remove dependent records before deleting this resource")
 	case errors.Is(err, conditional.ErrPreconditionFailed):

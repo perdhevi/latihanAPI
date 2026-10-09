@@ -103,8 +103,13 @@ func TestInvalidRequests(t *testing.T) {
 		name, method, path, body string
 		status                   int
 	}{
-		{"removed catalog", "GET", "/api/v1/exercises", "", 404},
-		{"removed catalog create", "POST", "/api/v1/exercises", "{}", 404},
+		{"catalog is read-only", "POST", "/api/v1/exercises", "{}", 405},
+		{"catalog bad UUID", "GET", "/api/v1/exercises/nope", "", 400},
+		{"catalog bad category", "GET", "/api/v1/exercises?category=yoga", "", 400},
+		{"stats bad bucket", "GET", "/api/v1/stats/progress?bucket=year", "", 400},
+		{"stats bad time", "GET", "/api/v1/stats/progress?from=yesterday", "", 400},
+		{"stats range too long", "GET", "/api/v1/stats/progress?from=2020-01-01T00:00:00Z&to=2026-01-01T00:00:00Z", "", 400},
+		{"stats unknown parameter", "GET", "/api/v1/stats/progress?user_id=" + id, "", 400},
 		{"bad UUID", "GET", "/api/v1/sessions/nope", "", 400},
 		{"nil UUID", "GET", "/api/v1/sessions/00000000-0000-0000-0000-000000000000", "", 400},
 		{"owner in query", "GET", "/api/v1/sessions?user_id=" + id, "", 400},

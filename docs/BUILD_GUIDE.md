@@ -38,11 +38,13 @@ fields and parameters are never ignored. Lists return the caller's own records, 
 
 ## What changed from the Exercise Library API
 
-`/api/v1/exercises` and `/api/v1/exercises/{id}` have been removed and return 404.
-A session is a completed workout, containing named exercise entries with their
-actual metrics. Exercises no longer require a shared catalog entry. Existing
-catalog data is preserved in the original `exercises` table by the migrations;
-it is not converted to sessions because catalog rows have no user or workout data.
+The original `/api/v1/exercises` endpoints were removed when sessions and plans
+arrived, and came back as a read-only catalog with migration `000007`. A session is
+a completed workout whose exercise entries carry their actual metrics; plans carry
+planned exercises. Both may link a catalog entry with `exercise_id` or stay
+free-form. Migration `000007_normalize_training` replaced the JSONB exercise
+documents with tables and **deleted the plans and sessions that existed**; migration
+`000008_seed_exercises` fills the catalog.
 
 Migration `000002_create_training` adds profiles, measurements, plans, and sessions.
 Existing installations should apply it before running the new API. Compose runs
@@ -240,7 +242,9 @@ response codes are in [api/openapi.yaml](../api/openapi.yaml) (OpenAPI 3.0.3).
 | `/users/me/measurements/{id}` | GET, PUT, DELETE | Read, correct, or delete a historical record |
 | `/plans` | GET, POST | List the caller's plans or create one |
 | `/plans/{id}` | GET, PUT, DELETE | Plan CRUD |
-| `/plans/{id}/comparison?session_id=UUID` | GET | Compare the attached plan snapshot with actual results |
+| `/plans/{id}/comparison?session_id=UUID` | GET | Compare a plan with the results of a session that followed it |
+| `/exercises`, `/exercises/{id}` | GET | The shared, read-only exercise catalog (`?category=` filter) |
+| `/stats/progress` | GET | Planned versus done per day/week/month (`from`, `to`, `bucket`, `exercise_id`) |
 | `/sessions` | GET, POST | List the caller's completed workouts or record one |
 | `/sessions/{id}` | GET, PUT, DELETE | Session CRUD |
 
@@ -298,8 +302,8 @@ results, POST to `/api/v1/sessions` using the plan and exercise IDs returned abo
   "performed_at": "2026-09-23T08:00:00Z",
   "plan_id": "PLAN_UUID",
   "exercises": [
-    {"plan_exercise_id":"SQUAT_ENTRY_UUID","name":"Squat","kind":"strength",
-      "sets":[{"repetitions":10,"weight_kg":55}]},
+    {"plan_exercise_id":"SQUAT_ENTRY_UUID","exercise_id":"CATALOG_SQUAT_UUID",
+      "notes":"Felt strong","sets":[{"repetitions":10,"weight_kg":55}]},
     {"plan_exercise_id":"RUN_ENTRY_UUID","name":"Running","kind":"cardio",
       "minutes":25,"avg_bpm":145}
   ]
@@ -308,7 +312,7 @@ results, POST to `/api/v1/sessions` using the plan and exercise IDs returned abo
 
 Omit `plan_id` for a standalone session. Omit `plan_exercise_id` for an unplanned
 exercise; this also lets a planned session include extra exercises. Linked entries
-must belong to the attached snapshot, use the same kind, and must not repeat.
+must belong to the attached plan, use the same kind, and must not repeat.
 Repeated exercise names in a plan are supported because matching uses entry IDs.
 
 ### Comparison semantics
@@ -328,13 +332,36 @@ There is no aggregate BPM across exercises. Sets match by their position within
 each exercise. Planned entries appear in plan order, followed by unplanned entries
 in session order. This is a factual comparison, not a training recommendation.
 
-Attaching a plan stores its full snapshot in the session in the same transaction.
-Editing the reusable plan cannot alter past comparisons. PUT replaces a plan's
-exercise entries and generates new entry IDs. Existing sessions continue to use
-their snapshot IDs. Updating a session with the same `plan_id` preserves its original
-snapshot. Changing the plan (or detaching and reattaching) captures the current
-version. A plan must belong to the same user as the session; the database enforces
-this with a composite foreign key. Comparison of an unrelated session returns 404.
+A plan whose exercises have been used by a session is frozen: its planned
+exercises and sets can no longer change, so past comparisons and statistics stay
+true. Sending the same exercises again only updates the plan's name and notes;
+anything else is refused with `409 plan_in_use`, and new targets belong in a new
+plan. A plan nobody uses yet can be rewritten freely (PUT replaces its exercises and
+generates new entry IDs). A plan must belong to the same user as the session; the
+database enforces this with a composite foreign key. Comparison of an unrelated
+session returns 404.
+
+### Exercise catalog and exercise details
+
+`GET /api/v1/exercises` lists a shared catalog (seeded by migration, the same for all
+users, read-only). Any planned or performed exercise may carry an `exercise_id` from
+it; the catalog then supplies a missing `name` and `kind`, and a `kind` that
+contradicts the catalog category is refused. Without `exercise_id` the exercise is
+free-form and needs `name` and `kind`. Every exercise also has optional `notes`
+(up to 1000 characters). Kinds are `strength` (1..100 sets of repetitions and
+`weight_kg`) and the timed kinds `cardio`, `mobility` and `stretching` (`minutes`,
+and for any timed kind an optional `avg_bpm`).
+
+### Progress statistics
+
+`GET /api/v1/stats/progress?bucket=week&from=...&to=...&exercise_id=...` adds up, per
+day, ISO week or month (UTC, default `week`, default range the last 90 days, at most
+366), the work the plans of the caller's sessions asked for (`planned`) against the
+work done (`actual`). `unplanned` is the part of `actual` that no plan asked for, and
+`delta` is actual minus planned. `volume_completion_pct` and
+`minutes_completion_pct` count only planned work that was done and are `null` when
+nothing of that kind was planned. Exercises of a planned session that were skipped
+still count as planned. With `exercise_id` the totals cover that catalog exercise only.
 
 ## Measurement history
 
@@ -655,7 +682,8 @@ is a PowerShell alias, or use `Invoke-RestMethod`.
 ```text
 cmd/api            application composition and lifecycle
 internal/profile   profiles, historical measurements, validation, SQL
-internal/training  plans, sessions, snapshot comparisons, validation, SQL
+internal/training  plans, sessions, exercise catalog, comparisons, progress statistics, validation, SQL
+internal/ids       time-ordered (UUIDv7) identifiers for primary keys
 auth               standalone module: provider contract and registry (stdlib only)
 auth/authtest      conformance suite for JWT-based providers
 internal/httpapi   REST routing, transport, middleware
@@ -671,14 +699,17 @@ seeds              optional development data
 api                OpenAPI contract
 ```
 
-Ordered exercise/set arrays and the attached plan snapshot are bounded JSONB
-documents, validated by the service and saved atomically. These aggregates are read
-and replaced as a whole; user ownership, plan linkage, dates, and measurements are
-relational. Session writes lock the existing session and, when taking a new snapshot,
-the selected plan. This prevents partially saved workouts or mixed plan versions.
+Plans and sessions are relational: a plan has `plan_exercises` with `plan_sets`, a
+session has `session_exercises` with `session_sets`, and a performed exercise points
+at the planned one it fulfils, so planned versus done is plain SQL (see
+[DATABASE.md](DATABASE.md)). A plan or session and its exercises are saved in one
+transaction. Session writes lock the existing session and share-lock the selected plan,
+and plan writes lock the plan, so a plan cannot change under a session that starts
+using it. This prevents partially saved workouts or mixed plan versions.
 Indexes support actual per-user history ordering and foreign-key deletion checks.
 
-UUIDs avoid sequential-ID dependencies. APIs currently generate IDs; persistence
+UUIDs avoid sequential-ID dependencies. Primary keys are time-ordered UUIDv7 values
+(`internal/ids`), which append to the index instead of landing at random places. APIs currently generate IDs; persistence
 can accept UUIDs without schema changes for future offline work. There is no sync
 engine yet. Concurrent replacements are guarded by ETag and If-Match, and retried
 creates by Idempotency-Key (see [Safe retries](#safe-retries)); a write without
@@ -702,7 +733,7 @@ Integration tests create a unique schema, apply the real migrations, exercise fu
 HTTP → service → PostgreSQL workflows, and remove only their own schema. The database
 user needs schema creation permission. Never use a production database for tests.
 The integration tag fails if its database URL is missing. Tests cover CRUD,
-ownership constraints, stable plan snapshots, plan changes/detachment, comparison
+ownership constraints, frozen plans, the exercise catalog, progress statistics, session detachment, comparison
 metrics, missing/unplanned exercises, history ordering, pagination, cancellation,
 deletion conflicts, migration rollback/reapplication, identity linking, the 401/403/409/503
 authentication responses, observability (route-pattern labels under many IDs, rejection, auth and panic

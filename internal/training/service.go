@@ -24,6 +24,10 @@ type Repository interface {
 	GetSession(ctx context.Context, owner, id uuid.UUID) (Session, error)
 	ListSessions(ctx context.Context, owner uuid.UUID, page validation.Page) ([]Session, error)
 	DeleteSession(ctx context.Context, owner, id uuid.UUID, match conditional.Match) error
+	// The catalog is shared by all users, so its methods take no owner.
+	ListCatalog(ctx context.Context, category string, page validation.Page) ([]CatalogExercise, error)
+	CatalogByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]CatalogExercise, error)
+	Progress(ctx context.Context, owner uuid.UUID, q ProgressQuery) ([]ProgressPoint, error)
 }
 type Service struct{ repo Repository }
 
@@ -35,12 +39,19 @@ func (s *Service) SavePlan(ctx context.Context, owner, id uuid.UUID, in PlanInpu
 	if err := validateHeader(&in.Name, &in.Notes, len(in.Exercises)); err != nil {
 		return Plan{}, err
 	}
+	pointers := make([]*ExerciseInput, len(in.Exercises))
+	for i := range in.Exercises {
+		pointers[i] = &in.Exercises[i]
+	}
+	if err := s.resolveCatalog(ctx, pointers); err != nil {
+		return Plan{}, err
+	}
 	entries := make([]PlanExercise, 0, len(in.Exercises))
 	for _, e := range in.Exercises {
 		if err := validateExercise(&e); err != nil {
 			return Plan{}, err
 		}
-		entries = append(entries, PlanExercise{ID: uuid.New(), ExerciseInput: e})
+		entries = append(entries, PlanExercise{ID: ids.New(), ExerciseInput: e})
 	}
 	if create {
 		id = ids.New()
@@ -81,6 +92,13 @@ func (s *Service) SaveSession(ctx context.Context, owner, id uuid.UUID, in Sessi
 	if in.PlanID != nil && *in.PlanID == uuid.Nil {
 		return Session{}, validation.Invalid("plan_id must not be the nil UUID")
 	}
+	pointers := make([]*ExerciseInput, len(in.Exercises))
+	for i := range in.Exercises {
+		pointers[i] = &in.Exercises[i].ExerciseInput
+	}
+	if err := s.resolveCatalog(ctx, pointers); err != nil {
+		return Session{}, err
+	}
 	for i := range in.Exercises {
 		if err := validateExercise(&in.Exercises[i].ExerciseInput); err != nil {
 			return Session{}, err
@@ -118,8 +136,12 @@ func (s *Service) Compare(ctx context.Context, owner, planID, sessionID uuid.UUI
 	if err != nil {
 		return Comparison{}, err
 	}
-	if session.PlanID == nil || *session.PlanID != planID || session.PlanSnapshot == nil {
+	if session.PlanID == nil || *session.PlanID != planID {
 		return Comparison{}, ErrNotFound
 	}
-	return Compare(session), nil
+	plan, err := s.GetPlan(ctx, owner, planID)
+	if err != nil {
+		return Comparison{}, err
+	}
+	return Compare(plan, session), nil
 }

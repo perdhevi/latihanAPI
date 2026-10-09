@@ -96,7 +96,7 @@ Send the token as `Authorization: Bearer <token>`. A new identity first calls
 | --- | --- | --- |
 | GET, POST | `/api/v1/plans` | List the caller's plans or create one |
 | GET, PUT, DELETE | `/api/v1/plans/{id}` | Read, replace or delete a plan |
-| GET | `/api/v1/plans/{id}/comparison?session_id=UUID` | Compare the plan snapshot with a session's actual results |
+| GET | `/api/v1/plans/{id}/comparison?session_id=UUID` | Compare a plan with a session's actual results |
 | GET, POST | `/api/v1/sessions` | List the caller's completed workouts or record one |
 | GET, PUT, DELETE | `/api/v1/sessions/{id}` | Read, replace or delete a session |
 
