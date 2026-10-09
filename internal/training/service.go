@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/perdhevi/latihanAPI/internal/conditional"
+	"github.com/perdhevi/latihanAPI/internal/ids"
 	"github.com/perdhevi/latihanAPI/internal/validation"
 )
 
@@ -42,7 +43,7 @@ func (s *Service) SavePlan(ctx context.Context, owner, id uuid.UUID, in PlanInpu
 		entries = append(entries, PlanExercise{ID: uuid.New(), ExerciseInput: e})
 	}
 	if create {
-		id = uuid.New()
+		id = ids.New()
 	}
 	return s.repo.SavePlan(ctx, Plan{ID: id, UserID: owner, Name: in.Name, Notes: in.Notes, Exercises: entries}, create, match)
 }
@@ -87,7 +88,7 @@ func (s *Service) SaveSession(ctx context.Context, owner, id uuid.UUID, in Sessi
 	}
 	in.PerformedAt = in.PerformedAt.UTC()
 	if create {
-		id = uuid.New()
+		id = ids.New()
 	}
 	return s.repo.SaveSession(ctx, owner, id, in, create, match)
 }

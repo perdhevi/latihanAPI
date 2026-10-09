@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/perdhevi/latihanAPI/internal/conditional"
+	"github.com/perdhevi/latihanAPI/internal/ids"
 	"github.com/perdhevi/latihanAPI/internal/validation"
 )
 
@@ -31,7 +32,7 @@ func (s *Service) CreateUser(ctx context.Context, in UserInput, owner Identity) 
 	if err := validation.Text("display_name", &in.DisplayName, 200, true); err != nil {
 		return User{}, err
 	}
-	return s.repo.CreateUser(ctx, uuid.New(), in, owner)
+	return s.repo.CreateUser(ctx, ids.New(), in, owner)
 }
 
 // ResolveIdentity returns the user linked to an identity, or ErrNotFound.
@@ -55,7 +56,7 @@ func (s *Service) CreateMeasurement(ctx context.Context, userID uuid.UUID, in Me
 		return Measurement{}, err
 	}
 	in.MeasuredAt = in.MeasuredAt.UTC()
-	return s.repo.CreateMeasurement(ctx, userID, uuid.New(), in)
+	return s.repo.CreateMeasurement(ctx, userID, ids.New(), in)
 }
 func (s *Service) GetMeasurement(ctx context.Context, userID, id uuid.UUID) (Measurement, error) {
 	return s.repo.GetMeasurement(ctx, userID, id)

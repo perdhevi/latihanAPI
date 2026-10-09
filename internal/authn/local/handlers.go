@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/perdhevi/latihanAPI/internal/httpjson"
+	"github.com/perdhevi/latihanAPI/internal/ids"
 )
 
 const (
@@ -67,7 +68,7 @@ func (p *Provider) register(w http.ResponseWriter, r *http.Request) {
 		p.internalError(w, r, err)
 		return
 	}
-	id := uuid.New()
+	id := ids.New()
 	// Answering 409 reveals that the address has an account. Hiding it needs an
 	// email-verification round trip, which this provider does not have.
 	if err := p.store.createCredential(r.Context(), id, email, hash); errors.Is(err, errEmailTaken) {
