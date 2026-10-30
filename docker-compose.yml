@@ -132,7 +132,7 @@ services:
   # Prometheus UI on http://localhost:9091, Jaeger UI on http://localhost:16686.
   # Set OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 in .env to send traces.
   prometheus:
-    image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
     profiles: [observability]
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
